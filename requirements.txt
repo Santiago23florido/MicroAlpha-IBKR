@@ -1,3 +1,11 @@
 ibapi
 python-dotenv
+numpy
+pandas
+pyarrow
+joblib
+scikit-learn
+torch
+streamlit
+pandas-market-calendars
 pytest

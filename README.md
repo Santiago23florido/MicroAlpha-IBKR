@@ -1,42 +1,55 @@
-# MicroAlpha IBKR MVP Foundation
+# MicroAlpha IBKR Paper Trading Foundation
 
-## Project Overview
+## Overview
 
-This repository contains a safety-first MVP foundation for Interactive Brokers paper trading through IB Gateway. The current implementation focuses on connectivity, account visibility, one-symbol market data snapshots, and one intentionally manual paper order path that stays blocked by default.
+This repository is a paper-only trading system for Interactive Brokers through IB Gateway. The codebase combines four pieces:
 
-## Current MVP Scope
+1. A broker CLI for connectivity, market data, account state, manual paper orders, cancellation, and manual closes.
+2. A session engine that runs one decision cycle for a single symbol, builds ORB and microstructure features, evaluates risk, stores the decision, and can optionally submit a paper trade.
+3. A small research stack with a baseline sklearn model and a lightweight PyTorch sequence model.
+4. A local Streamlit console for inspecting market state, models, decisions, trades, and manual controls.
 
-The first foundation includes:
+The default flow is still safety-first: paper only, dry-run by default, and explicit confirmation required before any real paper submission.
 
-- connection to IB Gateway paper at `127.0.0.1:4002` with `clientId=1`
-- connection health verification
-- current IB server time request
-- account summary request
-- current positions request
-- one-symbol market data snapshot
-- one explicit manual paper test order command
-- environment-based configuration via `.env`
-- structured console and file logging
-- placeholder strategy and risk modules for future extension
+## What The Project Does
 
-The first foundation does not include:
+Today the project can:
 
-- automatic trading loops
-- strategy execution
-- AI decision-making
-- live trading
-- dashboards
-- backtesting
-- multi-asset orchestration
-- automatic order placement on startup
+- connect to IB Gateway paper (`127.0.0.1:4002` by default)
+- fetch server time, account summary, positions, open orders, market snapshots, and intraday bars
+- compute an opening-range breakout state for the configured symbol
+- derive microstructure features and persist them in SQLite
+- run baseline and deep model inference when artifacts are registered
+- generate a final decision with risk checks and an explanation
+- optionally submit paper orders when every safety gate is open
+- track trade lifecycle events and execution events
+- log execution audit rows to CSV
+- expose the workflow in a local Streamlit UI
+
+It does not do live trading. It is still built around deliberate, single-cycle paper execution.
+
+## Project Layout
+
+- `app.py`: main CLI entrypoint
+- `broker/`: IBKR connectivity, contracts, and order builders
+- `engine/`: runtime wiring, market clock, and session cycle orchestration
+- `strategy/`: ORB logic, signal assembly, and decision explanation
+- `features/`: feature engineering from market and ORB context
+- `models/`: training, inference, and model registry
+- `storage/` and `reporting/`: SQLite stores, CSV audit logging, and summaries
+- `ui/`: Streamlit application
+- `data/`: schemas, loaders, feature store, and sample dataset
 
 ## Safety Notes
 
-- Paper trading only. This project assumes IB Gateway paper is running locally.
-- Dry-run is enabled by default through `DRY_RUN=true`.
-- Order submission is blocked by default through `SAFE_TO_TRADE=false`.
-- A paper order can only be sent through the explicit `paper-test-order` command.
-- Never commit `.env` or any credentials.
+- Paper trading only. IB Gateway paper must already be running locally.
+- `DRY_RUN=true` is the default.
+- `SAFE_TO_TRADE=false` is the default.
+- Session-triggered execution also requires `ALLOW_SESSION_EXECUTION=true`.
+- Manual test orders require `--confirm-paper` in addition to the environment flags.
+- Use tiny size first, such as `1` share.
+- If IB Gateway API is in read-only mode, order placement, cancellation, and some order queries will fail.
+- If `pandas-market-calendars` is not available, the market clock falls back to regular-hours timing without holiday modeling.
 
 ## Setup
 
@@ -60,7 +73,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Review `.env` and keep the defaults unless you intentionally need to change them:
+The defaults are intentionally safe. The most important values are:
 
 ```dotenv
 IB_HOST=127.0.0.1
@@ -69,79 +82,149 @@ IB_CLIENT_ID=1
 IB_SYMBOL=SPY
 DRY_RUN=true
 SAFE_TO_TRADE=false
-LOG_LEVEL=INFO
+ALLOW_SESSION_EXECUTION=false
+DEFAULT_ORDER_QUANTITY=1
 ```
 
-## Commands
+## Execution Commands
 
-### Safest first test: connection only
+### Start with help
+
+```bash
+python app.py --help
+```
+
+### Safest first connection check
 
 ```bash
 python app.py check-connection
 ```
 
-### Request current server time
+### Read-only broker commands
 
 ```bash
 python app.py server-time
-```
-
-### Request account summary
-
-```bash
 python app.py account-summary
-```
-
-### Request positions
-
-```bash
 python app.py positions
-```
-
-### Request one market snapshot
-
-Uses the symbol from `.env`:
-
-```bash
 python app.py snapshot
+python app.py snapshot --symbol SPY
+python app.py open-orders
 ```
 
-Override the symbol manually:
+### One safe session cycle
 
 ```bash
-python app.py snapshot --symbol AAPL
+python app.py session-cycle
 ```
 
-### Intentionally run one paper test order command
-
-The default configuration will not submit anything. It will either block the request or keep it as dry-run output until you explicitly change both safety flags.
-
-Dry-run preview only:
+Alias:
 
 ```bash
-python app.py paper-test-order --action BUY --quantity 1
+python app.py session
 ```
 
-Actual paper submission requires:
+### Request paper execution during a session cycle
 
-1. `SAFE_TO_TRADE=true`
-2. `DRY_RUN=false`
+This only submits if all execution gates are open:
 
-Then run:
+- `SAFE_TO_TRADE=true`
+- `DRY_RUN=false`
+- `ALLOW_SESSION_EXECUTION=true`
+- explicit `--paper`
 
 ```bash
-python app.py paper-test-order --action BUY --quantity 1
+python app.py session-cycle --paper
 ```
 
-## Logging
-
-- Console logs are emitted for every important event.
-- File logs are written to `logs/ibkr_mvp.log` by default.
-
-## Test Coverage
-
-Run the connection-focused test suite:
+### Inspect the last stored decision
 
 ```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/test_connection.py
+python app.py explain-latest-decision
+```
+
+Alias:
+
+```bash
+python app.py latest-decision
+```
+
+### Intentional tiny paper test order
+
+Safe preview:
+
+```bash
+python app.py place-test-order --action BUY --quantity 1
+```
+
+Real paper request:
+
+```bash
+python app.py place-test-order --action BUY --quantity 1 --confirm-paper
+```
+
+Alias:
+
+```bash
+python app.py test-order --action BUY --quantity 1
+```
+
+### Legacy manual order commands
+
+```bash
+python app.py market-order --action BUY --quantity 1
+python app.py limit-order --action BUY --quantity 1 --limit-price 500
+python app.py bracket-order --action BUY --quantity 1 --entry-limit 500 --take-profit 505 --stop-loss 495
+python app.py cancel-order --order-id 123
+python app.py close-position
+python app.py close-position --symbol SPY
+```
+
+### Model and research commands
+
+```bash
+python app.py train-baseline
+python app.py train-baseline --data-path data/sample/spy_microstructure_sample.csv
+python app.py train-deep --epochs 6
+python app.py list-models
+python app.py list-models --model-type baseline
+python app.py set-active-model --model-type baseline --artifact-id <artifact-id>
+```
+
+Alias:
+
+```bash
+python app.py models
+```
+
+### Launch the local UI
+
+```bash
+python app.py launch-ui
+```
+
+Alias:
+
+```bash
+python app.py ui
+```
+
+Direct Streamlit launch also works:
+
+```bash
+python -m streamlit run ui/streamlit_app.py
+```
+
+## Runtime Outputs
+
+- app logs: `logs/ibkr_mvp.log`
+- execution audit CSV: `logs/executions.csv`
+- SQLite runtime store: `runtime/microalpha.db`
+- model artifacts: `models/artifacts/`
+
+## Tests
+
+Run the local tests with:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests
 ```
