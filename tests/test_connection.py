@@ -11,23 +11,32 @@ from broker.ib_client import IBClient, IBRequestTimeout
 class FakeIBApp:
     def __init__(self, logger: logging.Logger) -> None:
         self.logger = logger
+        self.audit_store = None
         self.connected = False
         self.connection_ready = threading.Event()
         self.server_time_event = threading.Event()
         self.account_summary_event = threading.Event()
         self.positions_event = threading.Event()
+        self.open_orders_event = threading.Event()
+        self.executions_event = threading.Event()
         self.connection_errors: list[str] = []
         self.request_errors: dict[int, list[str]] = {}
         self.request_notices: dict[int, list[str]] = {}
         self.snapshot_events: dict[int, threading.Event] = {}
         self.order_events: dict[int, threading.Event] = {}
+        self.order_terminal_events: dict[int, threading.Event] = {}
         self.snapshot_data: dict[int, dict[str, object]] = {}
         self.order_statuses: dict[int, dict[str, object]] = {}
+        self.order_execution_details: dict[int, list[dict[str, object]]] = {}
         self.account_summary_rows: dict[int, list[dict[str, str]]] = {}
         self.positions_rows: list[dict[str, object]] = []
+        self.open_orders_rows: list[dict[str, object]] = []
+        self.execution_rows: list[dict[str, object]] = []
         self.current_server_time: int | None = None
         self.next_valid_order_id: int | None = None
         self.active_account_summary_req_id: int | None = None
+        self.collecting_open_orders = False
+        self.lock = threading.Lock()
 
     def connect(self, host: str, port: int, client_id: int) -> None:
         self.connected = True
@@ -46,6 +55,9 @@ class FakeIBApp:
     def reqCurrentTime(self) -> None:  # noqa: N802
         self.current_server_time = 1_700_000_000
         self.server_time_event.set()
+
+    def _copy_order_status_locked(self, order_id: int) -> dict[str, object]:
+        return dict(self.order_statuses.get(order_id, {}))
 
 
 class HangingIBApp(FakeIBApp):
