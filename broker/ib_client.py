@@ -35,7 +35,7 @@ ACCOUNT_SUMMARY_TAGS = ",".join(
 )
 
 INFO_ERROR_CODES = {2104, 2106, 2107, 2108, 2158}
-NON_FATAL_REQUEST_CODES = {10167}
+NON_FATAL_REQUEST_CODES = {10167, 2176}
 TERMINAL_ORDER_STATUSES = {"Filled", "Cancelled", "ApiCancelled", "Inactive"}
 TICK_PRICE_FIELDS = {
     1: "bid",
@@ -393,6 +393,12 @@ class _IBGatewayApp(EWrapper, EClient):
                 self.request_notices[reqId].append(message)
             return
 
+        if errorCode == 300 and "tickerId" in errorString:
+            self.logger.warning(message)
+            if reqId != -1:
+                self.request_notices[reqId].append(message)
+            return
+
         if reqId == -1:
             self.connection_errors.append(message)
         else:
@@ -698,18 +704,27 @@ class IBClient:
                 f"Market snapshot request for {symbol.upper()} failed. " + " | ".join(errors)
             )
 
-        if len(snapshot) <= 1:
-            details = (
-                " Confirm the symbol is valid and that your IB paper account has "
-                "live or delayed market data permissions for this instrument."
+        if not self._snapshot_has_price_fields(snapshot):
+            fallback_snapshot = self._market_snapshot_from_recent_bars(
+                symbol=symbol,
+                exchange=exchange,
+                currency=currency,
+                notices=notices,
             )
-            if notices:
-                details += " Broker notices: " + " | ".join(notices)
-            raise IBClientError(
-                f"Market snapshot for {symbol.upper()} returned no price fields." + details
-            )
+            if fallback_snapshot is None:
+                details = (
+                    " Confirm the symbol is valid and that your IB paper account has "
+                    "live or delayed market data permissions for this instrument."
+                )
+                if notices:
+                    details += " Broker notices: " + " | ".join(notices)
+                raise IBClientError(
+                    f"Market snapshot for {symbol.upper()} returned no price fields." + details
+                )
+            return fallback_snapshot
 
         snapshot["snapshot_utc"] = _utc_now_iso()
+        snapshot["source"] = "ib_snapshot"
         return snapshot
 
     def get_historical_bars(
@@ -751,6 +766,54 @@ class IBClient:
                 f"Historical data request for {symbol.upper()} failed. " + " | ".join(errors)
             )
         return rows
+
+    @staticmethod
+    def _snapshot_has_price_fields(snapshot: dict[str, Any]) -> bool:
+        return any(snapshot.get(field) not in {None, ""} for field in ("bid", "ask", "last", "open", "high", "low", "close"))
+
+    def _market_snapshot_from_recent_bars(
+        self,
+        *,
+        symbol: str,
+        exchange: str | None,
+        currency: str | None,
+        notices: list[str],
+    ) -> dict[str, Any] | None:
+        try:
+            rows = self.get_historical_bars(
+                symbol=symbol,
+                exchange=exchange,
+                currency=currency,
+                duration="2 D",
+                bar_size="1 min",
+                what_to_show="TRADES",
+                use_rth=True,
+            )
+        except IBClientError:
+            return None
+
+        if not rows:
+            return None
+
+        latest = rows[-1]
+        snapshot = {
+            "symbol": symbol.upper(),
+            "last": latest.get("close"),
+            "open": latest.get("open"),
+            "high": latest.get("high"),
+            "low": latest.get("low"),
+            "close": latest.get("close"),
+            "volume": latest.get("volume"),
+            "snapshot_utc": _utc_now_iso(),
+            "source": "historical_bar_fallback",
+            "market_data_notices": notices,
+            "bar_timestamp": latest.get("timestamp"),
+        }
+        self.logger.warning(
+            "Market snapshot for %s returned no tick prices. Falling back to the latest historical bar.",
+            symbol.upper(),
+        )
+        return snapshot
 
     def submit_market_order(
         self,

@@ -4,6 +4,9 @@ import argparse
 import json
 import subprocess
 import sys
+import threading
+import time
+import webbrowser
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any
@@ -500,6 +503,11 @@ def with_connected_client(runtime: RuntimeServices, callback) -> int:
 
 
 def launch_ui(settings: Settings, *, host: str | None = None, port: int | None = None) -> int:
+    bind_host = host or settings.ui.host
+    bind_port = port or settings.ui.port
+    browser_host = "127.0.0.1" if bind_host in {"0.0.0.0", "127.0.0.1"} else bind_host
+    browser_url = f"http://{browser_host}:{bind_port}"
+
     command = [
         sys.executable,
         "-m",
@@ -507,11 +515,27 @@ def launch_ui(settings: Settings, *, host: str | None = None, port: int | None =
         "run",
         "ui/streamlit_app.py",
         "--server.address",
-        host or settings.ui.host,
+        bind_host,
         "--server.port",
-        str(port or settings.ui.port),
+        str(bind_port),
+        "--server.headless",
+        "true",
+        "--browser.gatherUsageStats",
+        "false",
     ]
+    print(f"Launching UI at {browser_url}", flush=True)
+    print(f"If the browser does not open, open {browser_url} manually.", flush=True)
+    _open_browser_soon(browser_url)
     return subprocess.run(command, check=False).returncode
+
+
+def _open_browser_soon(url: str) -> None:
+    def _worker() -> None:
+        time.sleep(1.0)
+        with suppress(Exception):
+            webbrowser.open(url, new=2)
+
+    threading.Thread(target=_worker, name="streamlit-browser-opener", daemon=True).start()
 
 
 def _trade_event(
