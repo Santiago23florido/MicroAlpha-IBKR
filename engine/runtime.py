@@ -26,14 +26,14 @@ class RuntimeServices:
     session_engine: SessionEngine
 
 
-def build_runtime(env_file: str = ".env") -> RuntimeServices:
+def build_runtime(env_file: str = ".env", *, client_id_override: int | None = None) -> RuntimeServices:
     settings = load_settings(env_file)
     logger = setup_logger(settings.log_level, settings.log_file)
     audit_store = ExecutionAuditStore(settings.execution_log_file, logger)
     client = IBClient(
         host=settings.ib_host,
         port=settings.ib_port,
-        client_id=settings.ib_client_id,
+        client_id=client_id_override if client_id_override is not None else settings.ib_client_id,
         logger=logger,
         request_timeout=settings.request_timeout_seconds,
         order_follow_up_seconds=settings.order_follow_up_seconds,
