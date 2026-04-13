@@ -13,11 +13,12 @@ from engine.runtime import build_runtime
 from reporting.performance_report import build_performance_report
 from reporting.trade_report import build_trade_report
 from risk.risk_manager import ExecutionRequest
+from ui.actions import check_ib_connection, fetch_live_overview, resolve_ui_client_id
 from ui.components.common import render_kv_table, render_records_table
 
 
 st.set_page_config(page_title="MicroAlpha IBKR", layout="wide")
-runtime = build_runtime()
+runtime = build_runtime(client_id_override=resolve_ui_client_id())
 settings = runtime.settings
 
 
@@ -67,16 +68,37 @@ def render_overview() -> None:
             },
         )
     with right:
-        try:
-            payload = runtime.session_engine.test_connection()
-            st.success("IB Gateway paper connection is healthy." if payload["connected"] else "IB Gateway is not connected.")
-        except Exception as exc:
-            st.error(f"Connection check failed: {exc}")
+        if st.button("Check IB Connection"):
+            with st.spinner("Checking IB Gateway connection..."):
+                try:
+                    payload = check_ib_connection(runtime)
+                    st.session_state["ui_connection"] = payload
+                    st.session_state.pop("overview_error", None)
+                except Exception as exc:
+                    st.session_state["overview_error"] = str(exc)
+        payload = st.session_state.get("ui_connection")
+        if payload:
+            if payload.get("connected"):
+                st.success(
+                    f"IB Gateway paper connection is healthy. clientId={payload.get('client_id')} "
+                    f"host={payload.get('host')} port={payload.get('port')}"
+                )
+            else:
+                st.warning("IB Gateway is not connected.")
+        else:
+            st.info("Use 'Check IB Connection' to test the UI connection.")
 
     if st.button("Refresh Overview Data", type="primary"):
         with st.spinner("Fetching live paper account state..."):
-            data = fetch_live_overview()
-            st.session_state["overview_data"] = data
+            try:
+                data = fetch_live_overview(runtime)
+                st.session_state["overview_data"] = data
+                st.session_state["ui_connection"] = data.get("connection", {})
+                st.session_state.pop("overview_error", None)
+            except Exception as exc:
+                st.session_state["overview_error"] = str(exc)
+    if "overview_error" in st.session_state:
+        st.error(st.session_state["overview_error"])
     overview_data = st.session_state.get("overview_data", {})
     render_records_table("Account Summary", overview_data.get("account_summary", []))
     render_records_table("Open Positions", overview_data.get("positions", []))
@@ -85,7 +107,13 @@ def render_overview() -> None:
 def render_market() -> None:
     if st.button("Refresh Market View", type="primary"):
         with st.spinner("Running safe market refresh..."):
-            st.session_state["market_data"] = runtime.session_engine.run_cycle(execute_requested=False)
+            try:
+                st.session_state["market_data"] = runtime.session_engine.run_cycle(execute_requested=False)
+                st.session_state.pop("market_error", None)
+            except Exception as exc:
+                st.session_state["market_error"] = str(exc)
+    if "market_error" in st.session_state:
+        st.error(st.session_state["market_error"])
     payload = st.session_state.get("market_data")
     if not payload:
         latest = runtime.session_engine.explain_latest_decision()
@@ -144,7 +172,13 @@ def render_controls() -> None:
     )
     if st.button("Run Safe Session Cycle", type="primary"):
         with st.spinner("Running non-executing session cycle..."):
-            st.session_state["controls_session_result"] = runtime.session_engine.run_cycle(execute_requested=False)
+            try:
+                st.session_state["controls_session_result"] = runtime.session_engine.run_cycle(execute_requested=False)
+                st.session_state.pop("controls_error", None)
+            except Exception as exc:
+                st.session_state["controls_error"] = str(exc)
+    if "controls_error" in st.session_state:
+        st.error(st.session_state["controls_error"])
     if "controls_session_result" in st.session_state:
         st.json(st.session_state["controls_session_result"], expanded=False)
 
@@ -174,18 +208,6 @@ def render_controls() -> None:
         st.session_state["close_result"] = close_position(confirm_close)
     if "close_result" in st.session_state:
         st.json(st.session_state["close_result"], expanded=False)
-
-
-def fetch_live_overview() -> dict[str, Any]:
-    try:
-        runtime.client.connect()
-        return {
-            "account_summary": runtime.client.get_account_summary(),
-            "positions": runtime.client.get_positions(),
-        }
-    finally:
-        with suppress(Exception):
-            runtime.client.disconnect()
 
 
 def place_test_order(*, action: str, quantity: int, confirm_paper: bool) -> dict[str, Any]:
