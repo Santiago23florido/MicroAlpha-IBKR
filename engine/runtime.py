@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from broker.ib_client import IBClient
 from config import Settings, load_settings
 from data.feature_store import FeatureStore
 from engine.session import SessionEngine
 from models.registry import ModelRegistry
+from monitoring.logging import setup_logger
 from risk.risk_manager import RiskManager
 from storage.decisions import DecisionStore
 from storage.executions import ExecutionAuditStore
-from storage.logger import setup_logger
 from storage.trades import TradeStore
 
 
@@ -26,8 +27,15 @@ class RuntimeServices:
     session_engine: SessionEngine
 
 
-def build_runtime(env_file: str = ".env", *, client_id_override: int | None = None) -> RuntimeServices:
-    settings = load_settings(env_file)
+def build_runtime(
+    env_file: str | Path | None = None,
+    *,
+    config_dir: str | Path | None = None,
+    environment: str | None = None,
+    client_id_override: int | None = None,
+) -> RuntimeServices:
+    settings = load_settings(env_file, config_dir=config_dir, environment=environment)
+    ensure_runtime_directories(settings)
     logger = setup_logger(settings.log_level, settings.log_file)
     audit_store = ExecutionAuditStore(settings.execution_log_file, logger)
     client = IBClient(
@@ -74,3 +82,22 @@ def build_runtime(env_file: str = ".env", *, client_id_override: int | None = No
         model_registry=model_registry,
         session_engine=session_engine,
     )
+
+
+def ensure_runtime_directories(settings: Settings) -> None:
+    directories = [
+        settings.paths.data_root,
+        settings.paths.raw_dir,
+        settings.paths.processed_dir,
+        settings.paths.feature_dir,
+        settings.paths.model_dir,
+        settings.paths.model_artifacts_dir,
+        settings.paths.log_dir,
+        settings.paths.report_dir,
+        Path(settings.runtime_db_path).parent,
+        Path(settings.execution_log_file).parent,
+        Path(settings.log_file).parent,
+        Path(settings.models.registry_path).parent,
+    ]
+    for directory in directories:
+        Path(directory).mkdir(parents=True, exist_ok=True)
