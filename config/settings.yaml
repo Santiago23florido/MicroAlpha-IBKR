@@ -23,10 +23,13 @@ defaults:
     market_raw_dir: data/raw/market
     processed_dir: data/processed
     feature_dir: data/features
+    meta_dir: data/meta
     model_dir: data/models
     model_artifacts_dir: data/models/artifacts
     log_dir: data/logs
     report_dir: data/reports
+    sqlite_backup_dir: data/meta/sqlite_backups
+    sync_report_dir: data/reports/sync
     runtime_db_path: data/processed/runtime/microalpha.db
     log_file: data/logs/microalpha.log
     execution_log_file: data/reports/executions.csv
@@ -70,6 +73,31 @@ defaults:
     reconnect_delay_seconds: 10.0
     max_reconnect_attempts: 5
     health_log_interval_seconds: 60.0
+  feature_pipeline:
+    gap_threshold_seconds: 120
+    max_abs_spread_bps: 250.0
+    forward_fill_limit: 2
+    drop_outside_regular_hours: true
+    rolling_short_window: 5
+    rolling_medium_window: 15
+    rolling_long_window: 30
+    vwap_window: 30
+    volume_window: 30
+    label_horizon_rows: 1
+    train_split_ratio: 0.8
+  sync:
+    drive_subdirectory: microalpha
+    raw_enabled: true
+    features_enabled: true
+    sqlite_enabled: true
+    logs_enabled: false
+    delete_after_sync: false
+    delete_min_age_hours: 6.0
+    retention_days_local: 3
+    dry_run: true
+    validate_checksum: false
+    sqlite_backup_filename: microalpha_runtime_backup.sqlite
+    sqlite_source_path: data/processed/runtime/microalpha.db
 
 environments:
   development:
@@ -82,6 +110,14 @@ environments:
       poll_interval_seconds: 10.0
       flush_interval_seconds: 30.0
       batch_size: 20
+    feature_pipeline:
+      gap_threshold_seconds: 180
+      rolling_short_window: 5
+      rolling_medium_window: 15
+      rolling_long_window: 30
+    sync:
+      delete_after_sync: false
+      dry_run: true
   deploy:
     collector_enabled: true
     training_enabled: false
@@ -93,3 +129,11 @@ environments:
       poll_interval_seconds: 5.0
       flush_interval_seconds: 20.0
       batch_size: 50
+    feature_pipeline:
+      gap_threshold_seconds: 120
+      rolling_short_window: 5
+      rolling_medium_window: 15
+      rolling_long_window: 30
+    sync:
+      delete_after_sync: false
+      dry_run: true

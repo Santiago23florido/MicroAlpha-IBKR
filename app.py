@@ -15,7 +15,11 @@ from typing import Any, Sequence
 from backtest.runner import run_backtest_stub
 from broker.ib_client import IBClientError
 from config import Settings, load_settings
+from deployment.drive_sync import build_sync_status, sync_to_drive
+from deployment.retention import cleanup_local_artifacts
+from deployment.sqlite_backup import create_sqlite_backup
 from engine.runtime import RuntimeServices, build_runtime
+from features.feature_pipeline import run_feature_build_pipeline
 from ingestion.collector import collect_market_data
 from ingestion.ibkr_client import build_collector_ib_client
 from models.train_baseline import train_baseline_model
@@ -27,8 +31,8 @@ from monitoring.sync import sync_data_artifacts
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "MicroAlpha-IBKR phase 2 collector foundation. "
-            "Use development mode on PC1 for research/backtesting/training and deploy mode on PC2 for operational collection."
+            "MicroAlpha-IBKR phase 4 drive-sync and retention foundation. "
+            "Use development mode on PC1 for research/data processing and deploy mode on PC2 for collection, local retention, and Drive sync."
         )
     )
     parser.add_argument("--env-file", default=".env", help="Path to the environment file.")
@@ -53,6 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--flush-interval", type=float, help="Override the parquet flush interval in seconds.")
     collect_parser.add_argument("--batch-size", type=int, help="Override the in-memory batch size.")
     collect_parser.add_argument("--output-root", help="Optional raw-data destination override.")
+
+    build_features_parser = subparsers.add_parser(
+        "build-features",
+        help="Load raw market data, validate it, clean it, engineer features, and persist feature parquet files.",
+    )
+    build_features_parser.add_argument("--symbols", nargs="+", help="Override the configured symbol universe.")
+    build_features_parser.add_argument("--start-date", help="Filter raw data from this session date (YYYY-MM-DD).")
+    build_features_parser.add_argument("--end-date", help="Filter raw data until this session date (YYYY-MM-DD).")
+    build_features_parser.add_argument("--input-root", help="Override the raw market input root.")
+    build_features_parser.add_argument("--output-root", help="Override the processed feature output root.")
 
     train_parser = subparsers.add_parser("train", help="Train the baseline or deep model from a local dataset.")
     train_parser.add_argument("--model-type", required=True, choices=["baseline", "deep"])
@@ -112,6 +126,39 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument("--destination-root", required=True, help="Destination root for the sync plan or copy.")
     sync_parser.add_argument("--execute", action="store_true", help="Perform the file copy instead of a dry-run plan.")
 
+    sync_drive_parser = subparsers.add_parser(
+        "sync-drive",
+        help="Copy eligible local artifacts into the configured Google Drive sync folder with validation.",
+    )
+    sync_drive_parser.add_argument("--categories", nargs="+", choices=["raw", "features", "sqlite", "logs"])
+    sync_drive_parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None)
+    sync_drive_parser.add_argument("--delete-after-sync", action=argparse.BooleanOptionalAction, default=None)
+    sync_drive_parser.add_argument("--validate-checksum", action=argparse.BooleanOptionalAction, default=None)
+    sync_drive_parser.add_argument("--include-sqlite-backup", action=argparse.BooleanOptionalAction, default=True)
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup-local",
+        help="Delete already-synced local artifacts only after validation and retention checks.",
+    )
+    cleanup_parser.add_argument("--categories", nargs="+", choices=["raw", "features", "sqlite", "logs"])
+    cleanup_parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None)
+
+    sqlite_backup_parser = subparsers.add_parser(
+        "backup-sqlite",
+        help="Create a safe local SQLite snapshot backup. This never runs SQLite live from Drive.",
+    )
+    sqlite_backup_parser.add_argument("--source-path", help="Override the SQLite source path.")
+    sqlite_backup_parser.add_argument("--destination-dir", help="Override the local backup directory.")
+    sqlite_backup_parser.add_argument("--filename", help="Override the base backup filename.")
+    sqlite_backup_parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=None)
+
+    sync_status_parser = subparsers.add_parser(
+        "sync-status",
+        help="Inspect pending Drive sync work, deletable local data, and latest sync report state.",
+    )
+    sync_status_parser.add_argument("--categories", nargs="+", choices=["raw", "features", "sqlite", "logs"])
+    sync_status_parser.add_argument("--validate-checksum", action=argparse.BooleanOptionalAction, default=None)
+
     subparsers.add_parser("show-config", aliases=["config"], help="Print the effective merged configuration.")
     return parser
 
@@ -145,6 +192,64 @@ def main(argv: Sequence[str] | None = None) -> int:
                     settings,
                     destination_root=args.destination_root,
                     execute=args.execute,
+                )
+            )
+            return 0
+
+        if args.command == "sync-drive":
+            print_result(
+                sync_to_drive(
+                    settings,
+                    categories=args.categories,
+                    dry_run=args.dry_run,
+                    delete_after_sync=args.delete_after_sync,
+                    validate_checksum=args.validate_checksum,
+                    include_sqlite_backup=args.include_sqlite_backup,
+                )
+            )
+            return 0
+
+        if args.command == "cleanup-local":
+            print_result(
+                cleanup_local_artifacts(
+                    settings,
+                    categories=args.categories,
+                    dry_run=args.dry_run,
+                )
+            )
+            return 0
+
+        if args.command == "backup-sqlite":
+            print_result(
+                create_sqlite_backup(
+                    settings,
+                    source_path=args.source_path,
+                    destination_dir=args.destination_dir,
+                    filename=args.filename,
+                    dry_run=args.dry_run,
+                )
+            )
+            return 0
+
+        if args.command == "sync-status":
+            print_result(
+                build_sync_status(
+                    settings,
+                    categories=args.categories,
+                    validate_checksum=args.validate_checksum,
+                )
+            )
+            return 0
+
+        if args.command == "build-features":
+            print_result(
+                run_feature_build_pipeline(
+                    settings,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    input_root=args.input_root,
+                    output_root=args.output_root,
                 )
             )
             return 0

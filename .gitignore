@@ -23,6 +23,11 @@ data/processed/runtime/*
 !data/processed/runtime/.gitkeep
 data/features/*
 !data/features/.gitkeep
+data/meta/*
+!data/meta/.gitkeep
+!data/meta/sqlite_backups/
+data/meta/sqlite_backups/*
+!data/meta/sqlite_backups/.gitkeep
 data/models/*
 !data/models/.gitkeep
 !data/models/artifacts/
@@ -33,6 +38,9 @@ data/logs/*
 !data/logs/.gitkeep
 data/reports/*
 !data/reports/.gitkeep
+!data/reports/sync/
+data/reports/sync/*
+!data/reports/sync/.gitkeep
 exports/
 dist/
 build/
