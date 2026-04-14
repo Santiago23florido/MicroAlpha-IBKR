@@ -1,40 +1,55 @@
-# MicroAlpha-IBKR Phase 3 Data Pipeline
+# MicroAlpha-IBKR Phase 4 Drive Sync and Retention
 
 ## Purpose
 
-The repository is organized around a two-machine workflow:
+The repository is organized around a two-machine setup:
 
-- `PC1`: research, data validation, feature engineering, model training, backtesting
-- `PC2`: IBKR connectivity, market data collection, operational monitoring
+- `PC1`: research, data validation, feature engineering, training, backtesting
+- `PC2`: IBKR collection, local persistence, operational monitoring, local retention, Drive sync
 
-Phase 1 established the repository structure and configuration model.
-Phase 2 added the first operational collector on `PC2`.
-Phase 3 adds the `PC1` data pipeline that turns collected raw market data into validated, cleaned, feature-rich parquet datasets for later model work.
+Phase 1 organized the repo and CLI.
+Phase 2 added the collector on `PC2`.
+Phase 3 added the `PC1` data pipeline and feature generation.
+Phase 4 adds a safe sync-and-retention layer between `PC2` local storage and a Google Drive Desktop sync folder.
 
-This phase does **not** implement autonomous trading, final models, order execution, RL, LLM/news, or advanced optimization.
+## Core Rule for Phase 4
 
-## Phase 3 Scope
+SQLite must **not** run live from Google Drive.
 
-Phase 3 adds:
+The supported model is:
 
-- structured loading of raw market parquet partitions
-- data-quality validation and issue reporting
-- deterministic cleaning and normalization
-- ORB, microstructure, intraday, and cost features
-- parquet persistence for processed features
-- a dataset builder for future training workflows
-- a CLI entrypoint for end-to-end feature generation
+1. SQLite runs only on local disk on `PC2`
+2. raw parquet and feature parquet are written locally on `PC2`
+3. a sync process copies files into a local Google Drive folder
+4. SQLite is copied only as a snapshot backup
+5. local cleanup deletes files only after destination validation
 
-## PC2 -> PC1 Flow
+This phase does **not** implement autonomous trading, final execution, advanced modeling, RL, or cloud-native orchestration.
 
-Current intended workflow:
+## Phase 4 Scope
 
-1. `PC2` runs the collector and stores raw parquet under `data/raw/market/`
-2. raw partitions are synced from `PC2` to `PC1`
-3. `PC1` runs `python app.py build-features`
-4. the pipeline validates, cleans, and engineers features
-5. processed parquet is written under `data/features/`
-6. later phases will build labels, training jobs, and inference on top of that output
+Phase 4 adds:
+
+- validated sync into a local Google Drive Desktop folder
+- safe local snapshot backups of SQLite
+- configurable retention and cleanup on `PC2`
+- dry-run support for sync and cleanup
+- sync status reporting
+- logging and JSON reports for sync operations
+
+## PC2 Local + Drive Architecture
+
+The intended flow on `PC2` is now:
+
+1. collector writes local raw parquet into `data/raw/market/`
+2. later phases may write local features into `data/features/`
+3. runtime SQLite stays local, for example under `data/processed/runtime/`
+4. `python app.py backup-sqlite` creates a snapshot in `data/meta/sqlite_backups/`
+5. `python app.py sync-drive` copies local artifacts into the configured Google Drive Desktop folder
+6. copied files are validated locally in the Drive folder
+7. `python app.py cleanup-local` deletes only files that are both validated and old enough
+
+The Google Drive Desktop client is responsible for cloud upload. This code validates only the local copy inside the sync folder.
 
 ## Project Structure
 
@@ -46,52 +61,41 @@ MicroAlpha-IBKR/
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
+├── deployment/
+│   ├── drive_sync.py
+│   ├── retention.py
+│   └── sqlite_backup.py
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
 │   ├── raw/
 │   │   └── market/
-│   ├── processed/
 │   ├── features/
-│   ├── models/
+│   ├── processed/
+│   ├── meta/
+│   │   └── sqlite_backups/
 │   ├── logs/
 │   └── reports/
+│       └── sync/
 ├── ingestion/
-│   ├── ibkr_client.py
-│   ├── market_data.py
-│   ├── persistence.py
 │   └── collector.py
 ├── features/
-│   ├── orb_features.py
-│   ├── microstructure_features.py
-│   ├── preprocessing.py
 │   └── feature_pipeline.py
 ├── labels/
-│   ├── generator.py
 │   └── dataset_builder.py
 ├── monitoring/
-│   ├── logging.py
 │   ├── healthcheck.py
+│   ├── logging.py
 │   └── data_quality.py
 ├── scripts/
 │   ├── run_collector.py
 │   ├── build_features.py
-│   ├── train_model.py
-│   ├── run_session.py
-│   ├── healthcheck.py
-│   └── sync_data.py
+│   ├── sync_to_drive.py
+│   ├── cleanup_local.py
+│   ├── backup_sqlite.py
+│   └── healthcheck.py
 └── tests/
 ```
-
-Existing modules from earlier phases remain in place:
-
-- `broker/`
-- `engine/`
-- `models/`
-- `risk/`
-- `strategy/`
-- `storage/`
-- `ui/`
 
 ## Configuration
 
@@ -108,32 +112,31 @@ Environment modes:
 - `development` for `PC1`
 - `deploy` for `PC2`
 
-### Relevant Phase 3 Settings
+### Phase 4 Settings
 
-From `config/settings.yaml` and `.env`:
+Relevant sync settings:
 
-- `DATA_ROOT`
-- `MARKET_RAW_DIR`
-- `SUPPORTED_SYMBOLS`
-- `LOG_LEVEL`
-- `TIMEZONE`
-- `FEATURE_GAP_THRESHOLD_SECONDS`
-- `FEATURE_MAX_ABS_SPREAD_BPS`
-- `FEATURE_FORWARD_FILL_LIMIT`
-- `FEATURE_DROP_OUTSIDE_REGULAR_HOURS`
-- `FEATURE_ROLLING_SHORT_WINDOW`
-- `FEATURE_ROLLING_MEDIUM_WINDOW`
-- `FEATURE_ROLLING_LONG_WINDOW`
-- `FEATURE_VWAP_WINDOW`
-- `FEATURE_VOLUME_WINDOW`
-- `FEATURE_LABEL_HORIZON_ROWS`
-- `FEATURE_TRAIN_SPLIT_RATIO`
+- `SYNC_ENABLED`
+- `GOOGLE_DRIVE_ROOT`
+- `GOOGLE_DRIVE_SUBDIR`
+- `SYNC_RAW_ENABLED`
+- `SYNC_FEATURES_ENABLED`
+- `SYNC_SQLITE_ENABLED`
+- `SYNC_LOGS_ENABLED`
+- `DELETE_AFTER_SYNC`
+- `DELETE_MIN_AGE_HOURS`
+- `RETENTION_DAYS_LOCAL`
+- `SYNC_DRY_RUN`
+- `SYNC_VALIDATE_CHECKSUM`
+- `SQLITE_BACKUP_FILENAME`
+- `SQLITE_SOURCE_PATH`
+- `SQLITE_BACKUP_DIR`
+- `SYNC_REPORT_DIR`
 
 Inspect the effective config with:
 
 ```bash
 python app.py show-config
-python app.py --environment development show-config
 python app.py --environment deploy show-config
 ```
 
@@ -147,272 +150,256 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Raw Data Layout
+## Google Drive Desktop Setup
 
-The collector on `PC2` writes raw market data under:
+This implementation assumes you have a local folder already managed by Google Drive Desktop, for example:
+
+```text
+G:/My Drive
+/mnt/g/My Drive
+/home/<user>/Google Drive
+```
+
+Set `GOOGLE_DRIVE_ROOT` to that local folder. The application will create or use a subdirectory inside it, controlled by `GOOGLE_DRIVE_SUBDIR`.
+
+Example:
+
+```dotenv
+GOOGLE_DRIVE_ROOT=/mnt/g/My Drive
+GOOGLE_DRIVE_SUBDIR=microalpha
+```
+
+The resulting local Drive base would be:
+
+```text
+/mnt/g/My Drive/microalpha
+```
+
+## Local Data Layout on PC2
+
+Raw collector output:
 
 ```text
 data/raw/market/YYYY-MM-DD/SYMBOL/collector_*.parquet
 ```
 
-The phase 3 loader also accepts the flatter variant:
-
-```text
-data/raw/market/YYYY-MM-DD/SYMBOL.parquet
-```
-
-Expected raw columns are normalized around:
-
-- `timestamp`
-- `symbol`
-- `last_price`
-- `bid`
-- `ask`
-- `spread`
-- `bid_size`
-- `ask_size`
-- `last_size`
-- `volume`
-- `event_type`
-- `source`
-- `session_window`
-- `is_market_open`
-- `exchange_time`
-- `collected_at`
-
-## Feature Output Layout
-
-Processed features are written to:
+Processed feature output:
 
 ```text
 data/features/YYYY-MM-DD/SYMBOL.parquet
 ```
 
-Feature-build reports are written to:
+SQLite runtime database:
 
 ```text
-data/reports/feature_build_report_<timestamp>.json
+data/processed/runtime/microalpha.db
 ```
 
-## Features Implemented
+Local SQLite snapshot backups:
 
-### ORB Features
+```text
+data/meta/sqlite_backups/*.sqlite
+```
 
-- `orb_high`
-- `orb_low`
-- `orb_range_mid`
-- `orb_range_width`
-- `orb_range_width_bps`
-- `orb_relative_price_position`
-- `breakout_distance`
-- `breakout_distance_bps`
-- `orb_range_complete`
-- `minutes_since_open`
+Sync reports:
 
-### Microstructure Features
+```text
+data/reports/sync/*.json
+```
 
-- `mid_price`
-- `micro_price`
-- `spread`
-- `spread_bps`
-- `bid_ask_imbalance`
-- `rolling_spread_mean_bps`
-- `rolling_spread_std_bps`
-- `rolling_imbalance_mean`
-- `rolling_imbalance_std`
+## Drive Destination Layout
 
-### Intraday Features
+Inside the local Google Drive folder, files are copied into this structure:
 
-- `return_1_bps`
-- `return_short_bps`
-- `return_medium_bps`
-- `rolling_volatility_short_bps`
-- `rolling_volatility_medium_bps`
-- `rolling_volatility_long_bps`
-- `vwap_approx`
-- `distance_to_vwap_bps`
-- `relative_volume`
-- `time_of_day_sin`
-- `time_of_day_cos`
+```text
+<GOOGLE_DRIVE_ROOT>/<GOOGLE_DRIVE_SUBDIR>/
+├── raw/
+│   └── market/YYYY-MM-DD/SYMBOL/collector_*.parquet
+├── features/
+│   └── YYYY-MM-DD/SYMBOL.parquet
+├── meta/
+│   └── sqlite/*.sqlite
+└── logs/
+```
 
-### Cost Features
+## Safety Model
 
-- `spread_proxy_bps`
-- `slippage_proxy_bps`
-- `estimated_cost_bps`
+Before any local file is considered synced, the system validates:
 
-## Data Quality Validation
+- destination file exists
+- destination size is greater than zero
+- destination size matches the source exactly
+- optional checksum match when enabled
 
-The validation layer checks for:
-
-- missing timestamps
-- duplicated rows
-- large timestamp gaps
-- critical nulls
-- `bid > ask`
-- negative spreads
-- absurd spreads in bps
-- rows outside regular market hours
-
-The feature pipeline logs detected issues before and after cleaning so you can see whether cleaning fixed them or whether they remain in the source data.
-
-## Cleaning Rules
-
-Cleaning currently does the following:
-
-- enforce timestamp parsing and numeric types
-- sort by `symbol` and `timestamp`
-- drop duplicate `(symbol, timestamp)` rows
-- forward fill quote fields with a bounded limit
-- recompute `mid_price` and `spread` from cleaned quotes
-- discard invalid quotes and absurd spreads
-- optionally drop rows outside regular hours
-- attach session metadata used by feature generation
-
-The cleaning layer is intentionally conservative. It avoids inventing values beyond bounded forward fill.
+Files are never deleted without validation.
 
 ## Main Commands
 
-### Build Features on PC1
-
-Default run on configured symbols:
+### Collector on PC2
 
 ```bash
-python app.py build-features
+python app.py --environment deploy collect --once
+python app.py --environment deploy collect --max-cycles 120
 ```
 
-Date-bounded run:
+### Feature Build on PC1
 
 ```bash
-python app.py build-features --start-date 2026-04-01 --end-date 2026-04-05
+python app.py --environment development build-features
+python app.py --environment development build-features --symbols SPY QQQ
 ```
 
-Symbol override:
+### Sync to Google Drive
+
+Dry-run using configured defaults:
 
 ```bash
-python app.py build-features --symbols SPY QQQ
+python app.py --environment deploy sync-drive
 ```
 
-Custom roots:
+Explicit execution:
 
 ```bash
-python app.py build-features \
-  --input-root /path/to/raw_market \
-  --output-root /path/to/feature_output
+python app.py --environment deploy sync-drive --no-dry-run
+```
+
+Sync only selected categories:
+
+```bash
+python app.py --environment deploy sync-drive --categories raw features
+```
+
+Enable deletion right after validated sync:
+
+```bash
+python app.py --environment deploy sync-drive --no-dry-run --delete-after-sync
 ```
 
 Script entrypoint:
 
 ```bash
-python scripts/build_features.py --symbols SPY QQQ
+python scripts/sync_to_drive.py --environment deploy --no-dry-run
 ```
 
-### Collector on PC2
+### Local Cleanup
 
-One bounded cycle:
+Dry-run cleanup:
 
 ```bash
-python app.py --environment deploy collect --once
+python app.py --environment deploy cleanup-local
 ```
 
-Longer deploy-side run:
+Execute cleanup:
 
 ```bash
-python app.py --environment deploy collect --max-cycles 120
+python app.py --environment deploy cleanup-local --no-dry-run
 ```
+
+Script entrypoint:
+
+```bash
+python scripts/cleanup_local.py --environment deploy --no-dry-run
+```
+
+### SQLite Backup
+
+Dry-run backup:
+
+```bash
+python app.py --environment deploy backup-sqlite
+```
+
+Create a real local snapshot:
+
+```bash
+python app.py --environment deploy backup-sqlite --no-dry-run
+```
+
+Script entrypoint:
+
+```bash
+python scripts/backup_sqlite.py --environment deploy --no-dry-run
+```
+
+### Sync Status
+
+```bash
+python app.py --environment deploy sync-status
+```
+
+This reports:
+
+- pending local files
+- already-synced files
+- invalid destination copies
+- estimated deletable bytes
+- Drive folder availability
+- latest sync report path and status
 
 ### Healthcheck
 
-Config and paths only:
-
 ```bash
 python app.py healthcheck --skip-broker
-```
-
-Collector-oriented broker check:
-
-```bash
 python app.py --environment deploy healthcheck
 ```
 
-Script form:
+## Phase 3 Data Pipeline Still Present
 
-```bash
-python scripts/healthcheck.py --environment deploy --skip-broker
-```
+Phase 4 does not remove the research pipeline introduced in phase 3. The repository still supports:
 
-## Example Workflow
+- raw parquet loading
+- data-quality validation
+- deterministic cleaning
+- ORB, microstructure, intraday, and cost features
+- dataset preparation for later training
 
-### PC2
+## Logging and Reports
 
-Collect raw market data:
+Shared logging is handled by `monitoring/logging.py`.
 
-```bash
-python app.py --environment deploy collect --max-cycles 60
-```
+Phase 4 logs:
 
-### PC1
+- sync start and finish
+- Drive path availability
+- SQLite backup creation
+- files copied
+- files skipped
+- validation failures
+- files deleted
+- dry-run mode
 
-Build research features from the synced raw data:
-
-```bash
-python app.py --environment development build-features --symbols SPY QQQ
-```
-
-## Dataset Builder
-
-`labels/dataset_builder.py` prepares the next step for training workflows:
-
-- selects numeric feature columns
-- creates a placeholder future-return target
-- keeps temporal ordering intact
-- produces a temporal train/test split
-
-This is intentionally a base layer, not the final production labeling design.
-
-## Logging
-
-Shared logging comes from `monitoring/logging.py`.
-
-Phase 3 logs at least:
-
-- pipeline start and finish
-- raw rows loaded
-- symbols and day range processed
-- quality issues detected
-- cleaned row counts
-- feature row counts
-- written parquet files
-- report path and runtime duration
-
-Default log location:
+Structured JSON reports are written under:
 
 ```text
-data/logs/microalpha.log
+data/reports/sync/
 ```
+
+## Important Limitation
+
+Validation only confirms the file exists in the local Google Drive folder and matches the local source by size and, optionally, checksum.
+
+It does **not** confirm that Google Drive has already uploaded the file to the cloud. That responsibility belongs to the Google Drive Desktop client.
 
 ## Current Limitations
 
-Phase 3 is intentionally limited:
+Phase 4 is intentionally conservative:
 
-- no final labels yet
-- no advanced outlier correction
-- no feature-store versioning beyond parquet partitions
-- no online feature computation on `PC2`
-- no inference or execution
-- no cross-day session stitching logic for multi-session products
-- no advanced sync orchestration between machines
+- no cloud API integration
+- no remote upload acknowledgment beyond local Drive-folder validation
+- no deduplicated manifest database for sync state
+- no advanced space-pressure scheduler yet
+- no object-store or remote checksum catalog
+- no final deployment supervisor service yet
 
-## What Phase 4 Should Add
+## What Phase 5 Should Add
 
-Phase 4 can now build on this data foundation:
+Phase 5 can now build on this foundation:
 
-- richer label generation
-- training datasets tied to explicit prediction horizons
-- stronger data-quality reports and dashboards
-- feature-store validation and versioning rules
-- online feature parity between `PC2` and `PC1`
-- inference-preparation pipeline
+- scheduled sync and cleanup jobs on `PC2`
+- stronger retention policies by class of data
+- Drive sync monitoring and alerting
+- artifact promotion from Drive into `PC1` research workflows
+- tighter end-to-end automation between collection, sync, feature build, and training
 
 ## Tests
 
@@ -422,9 +409,10 @@ Run the full suite with:
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests
 ```
 
-Phase 3 added tests for:
+Phase 4 specifically adds tests for:
 
-- raw parquet loading across multiple days and layouts
-- data-quality issue detection
-- cleaning + feature build end to end
-- dataset builder temporal splits
+- SQLite snapshot backup creation
+- Drive sync dry-run and real copy behavior
+- validation before deletion
+- cleanup of only confirmed synced files
+- sync status reporting

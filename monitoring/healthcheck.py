@@ -62,6 +62,29 @@ def build_healthcheck_report(
             "output_root": str(settings.paths.market_raw_dir),
             "output_root_writable": _path_is_writable(settings.paths.market_raw_dir),
         },
+        "sync": {
+            "enabled": settings.deployment.sync_enabled,
+            "drive_root": _path_status(settings.sync.google_drive_root) if settings.sync.google_drive_root else None,
+            "drive_subdirectory": settings.sync.drive_subdirectory,
+            "drive_base_dir": str(
+                (Path(settings.sync.google_drive_root).expanduser().resolve() / settings.sync.drive_subdirectory)
+                if settings.sync.google_drive_root
+                else ""
+            ),
+            "categories": {
+                "raw": settings.sync.raw_enabled,
+                "features": settings.sync.features_enabled,
+                "sqlite": settings.sync.sqlite_enabled,
+                "logs": settings.sync.logs_enabled,
+            },
+            "delete_after_sync": settings.sync.delete_after_sync,
+            "delete_min_age_hours": settings.sync.delete_min_age_hours,
+            "retention_days_local": settings.sync.retention_days_local,
+            "dry_run": settings.sync.dry_run,
+            "sqlite_source_path": str(settings.sync.sqlite_source_path),
+            "sqlite_backup_dir": _path_status(settings.paths.sqlite_backup_dir),
+            "sync_report_dir": _path_status(settings.paths.sync_report_dir),
+        },
     }
     report["collector"]["ready"] = bool(
         report["collector"]["symbols"]

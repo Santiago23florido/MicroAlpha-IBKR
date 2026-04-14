@@ -208,6 +208,23 @@ class FeaturePipelineSettings:
 
 
 @dataclass(frozen=True)
+class SyncSettings:
+    google_drive_root: str | None = None
+    drive_subdirectory: str = "microalpha"
+    raw_enabled: bool = True
+    features_enabled: bool = True
+    sqlite_enabled: bool = True
+    logs_enabled: bool = False
+    delete_after_sync: bool = False
+    delete_min_age_hours: float = 6.0
+    retention_days_local: int = 3
+    dry_run: bool = True
+    validate_checksum: bool = False
+    sqlite_backup_filename: str = "microalpha_runtime_backup.sqlite"
+    sqlite_source_path: str = "data/processed/runtime/microalpha.db"
+
+
+@dataclass(frozen=True)
 class PathSettings:
     project_root: str = "."
     config_dir: str = "config"
@@ -216,10 +233,13 @@ class PathSettings:
     market_raw_dir: str = "data/raw/market"
     processed_dir: str = "data/processed"
     feature_dir: str = "data/features"
+    meta_dir: str = "data/meta"
     model_dir: str = "data/models"
     model_artifacts_dir: str = "data/models/artifacts"
     log_dir: str = "data/logs"
     report_dir: str = "data/reports"
+    sqlite_backup_dir: str = "data/meta/sqlite_backups"
+    sync_report_dir: str = "data/reports/sync"
 
 
 @dataclass(frozen=True)
@@ -246,6 +266,7 @@ class Settings:
     ui: UISettings
     collector: CollectorSettings = field(default_factory=CollectorSettings)
     feature_pipeline: FeaturePipelineSettings = field(default_factory=FeaturePipelineSettings)
+    sync: SyncSettings = field(default_factory=SyncSettings)
     paths: PathSettings = field(default_factory=PathSettings)
     deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
 
@@ -454,10 +475,13 @@ def load_settings(
     market_raw_dir_raw = _path_value("MARKET_RAW_DIR", "market_raw_dir", "raw/market")
     processed_dir_raw = _path_value(None, "processed_dir", "processed")
     feature_dir_raw = _path_value(None, "feature_dir", "features")
+    meta_dir_raw = _path_value("META_DIR", "meta_dir", "meta")
     model_dir_raw = _path_value(None, "model_dir", "models")
     model_artifacts_dir_raw = _path_value("MODEL_ARTIFACTS_DIR", "model_artifacts_dir", "models/artifacts")
     log_dir_raw = _path_value(None, "log_dir", "logs")
     report_dir_raw = _path_value(None, "report_dir", "reports")
+    sqlite_backup_dir_raw = _path_value("SQLITE_BACKUP_DIR", "sqlite_backup_dir", "meta/sqlite_backups")
+    sync_report_dir_raw = _path_value("SYNC_REPORT_DIR", "sync_report_dir", "reports/sync")
     log_file_raw = _path_value("LOG_FILE", "log_file", "logs/microalpha.log")
     execution_log_raw = _path_value("EXECUTION_LOG_FILE", "execution_log_file", "reports/executions.csv")
     runtime_db_raw = _path_value("RUNTIME_DB_PATH", "runtime_db_path", "processed/runtime/microalpha.db")
@@ -471,10 +495,13 @@ def load_settings(
         market_raw_dir=_resolve_path(project_root, market_raw_dir_raw),
         processed_dir=_resolve_path(project_root, processed_dir_raw),
         feature_dir=_resolve_path(project_root, feature_dir_raw),
+        meta_dir=_resolve_path(project_root, meta_dir_raw),
         model_dir=_resolve_path(project_root, model_dir_raw),
         model_artifacts_dir=_resolve_path(project_root, model_artifacts_dir_raw),
         log_dir=_resolve_path(project_root, log_dir_raw),
         report_dir=_resolve_path(project_root, report_dir_raw),
+        sqlite_backup_dir=_resolve_path(project_root, sqlite_backup_dir_raw),
+        sync_report_dir=_resolve_path(project_root, sync_report_dir_raw),
     )
 
     deployment = DeploymentSettings(
@@ -515,6 +542,7 @@ def load_settings(
     ui_defaults = merged_settings.get("ui", {})
     collector_defaults = merged_settings.get("collector", {})
     feature_pipeline_defaults = merged_settings.get("feature_pipeline", {})
+    sync_defaults = merged_settings.get("sync", {})
 
     return Settings(
         broker=BrokerSettings(
@@ -766,6 +794,69 @@ def load_settings(
                 runtime_env,
                 "FEATURE_TRAIN_SPLIT_RATIO",
                 float(feature_pipeline_defaults.get("train_split_ratio", 0.8)),
+            ),
+        ),
+        sync=SyncSettings(
+            google_drive_root=runtime_env.get("GOOGLE_DRIVE_ROOT") or sync_defaults.get("google_drive_root") or None,
+            drive_subdirectory=runtime_env.get(
+                "GOOGLE_DRIVE_SUBDIR",
+                str(sync_defaults.get("drive_subdirectory", "microalpha")),
+            ),
+            raw_enabled=_parse_bool(
+                runtime_env,
+                "SYNC_RAW_ENABLED",
+                bool(sync_defaults.get("raw_enabled", True)),
+            ),
+            features_enabled=_parse_bool(
+                runtime_env,
+                "SYNC_FEATURES_ENABLED",
+                bool(sync_defaults.get("features_enabled", True)),
+            ),
+            sqlite_enabled=_parse_bool(
+                runtime_env,
+                "SYNC_SQLITE_ENABLED",
+                bool(sync_defaults.get("sqlite_enabled", True)),
+            ),
+            logs_enabled=_parse_bool(
+                runtime_env,
+                "SYNC_LOGS_ENABLED",
+                bool(sync_defaults.get("logs_enabled", False)),
+            ),
+            delete_after_sync=_parse_bool(
+                runtime_env,
+                "DELETE_AFTER_SYNC",
+                bool(sync_defaults.get("delete_after_sync", False)),
+            ),
+            delete_min_age_hours=_parse_float(
+                runtime_env,
+                "DELETE_MIN_AGE_HOURS",
+                float(sync_defaults.get("delete_min_age_hours", 6.0)),
+            ),
+            retention_days_local=_parse_int(
+                runtime_env,
+                "RETENTION_DAYS_LOCAL",
+                int(sync_defaults.get("retention_days_local", 3)),
+            ),
+            dry_run=_parse_bool(
+                runtime_env,
+                "SYNC_DRY_RUN",
+                bool(sync_defaults.get("dry_run", True)),
+            ),
+            validate_checksum=_parse_bool(
+                runtime_env,
+                "SYNC_VALIDATE_CHECKSUM",
+                bool(sync_defaults.get("validate_checksum", False)),
+            ),
+            sqlite_backup_filename=runtime_env.get(
+                "SQLITE_BACKUP_FILENAME",
+                str(sync_defaults.get("sqlite_backup_filename", "microalpha_runtime_backup.sqlite")),
+            ),
+            sqlite_source_path=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "SQLITE_SOURCE_PATH",
+                    str(sync_defaults.get("sqlite_source_path", runtime_db_raw)),
+                ),
             ),
         ),
         paths=paths,
