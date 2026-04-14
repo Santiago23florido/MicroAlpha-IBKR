@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from config import Settings
@@ -29,6 +30,7 @@ def build_healthcheck_report(
         "paths": {
             "data_root": _path_status(settings.paths.data_root),
             "raw_dir": _path_status(settings.paths.raw_dir),
+            "market_raw_dir": _path_status(settings.paths.market_raw_dir),
             "processed_dir": _path_status(settings.paths.processed_dir),
             "feature_dir": _path_status(settings.paths.feature_dir),
             "model_dir": _path_status(settings.paths.model_dir),
@@ -43,11 +45,28 @@ def build_healthcheck_report(
                 "port": settings.ib_port,
                 "client_id": settings.ib_client_id,
                 "ui_client_id": settings.ib_ui_client_id,
+                "collector_client_id": settings.ib_collector_client_id,
                 "symbol": settings.ib_symbol,
             },
             "connected": None,
         },
+        "collector": {
+            "enabled": settings.collector_enabled,
+            "mode": settings.collector.mode,
+            "symbols": list(settings.supported_symbols),
+            "poll_interval_seconds": settings.collector.poll_interval_seconds,
+            "flush_interval_seconds": settings.collector.flush_interval_seconds,
+            "batch_size": settings.collector.batch_size,
+            "reconnect_delay_seconds": settings.collector.reconnect_delay_seconds,
+            "max_reconnect_attempts": settings.collector.max_reconnect_attempts,
+            "output_root": str(settings.paths.market_raw_dir),
+            "output_root_writable": _path_is_writable(settings.paths.market_raw_dir),
+        },
     }
+    report["collector"]["ready"] = bool(
+        report["collector"]["symbols"]
+        and report["collector"]["output_root_writable"]
+    )
 
     if broker_client is None:
         report["broker"]["status"] = "not_checked"
@@ -75,3 +94,13 @@ def _path_status(value: str | Path) -> dict[str, Any]:
         "exists": path.exists(),
         "is_dir": path.is_dir(),
     }
+
+
+def _path_is_writable(value: str | Path) -> bool:
+    path = Path(value)
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.NamedTemporaryFile(dir=path, prefix=".microalpha_health_", delete=True):
+            return True
+    except OSError:
+        return False

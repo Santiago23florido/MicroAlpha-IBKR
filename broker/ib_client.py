@@ -598,7 +598,14 @@ class IBClient:
         )
         self._app.connection_ready.clear()
         self._app.connection_errors.clear()
-        self._app.connect(self.host, self.port, self.client_id)
+        try:
+            self._app.connect(self.host, self.port, self.client_id)
+        except Exception as exc:
+            self._app.connection_ready.clear()
+            raise IBClientError(
+                f"IB connection bootstrap failed before the handshake at {self.host}:{self.port} "
+                f"with clientId={self.client_id}. Root cause: {exc}"
+            ) from exc
 
         self._thread = threading.Thread(
             target=self._app.run,
