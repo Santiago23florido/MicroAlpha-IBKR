@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 3 feature pipeline entrypoint for PC1 research data preparation."""
+"""PC1 entrypoint for validating imported raw data and generating feature parquet files."""
 
 from __future__ import annotations
 

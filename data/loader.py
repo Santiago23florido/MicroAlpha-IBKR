@@ -42,7 +42,7 @@ def load_market_data(
     if not files:
         raise FileNotFoundError(
             f"No market parquet files found under {root_dir}. "
-            "Run the PC2 collector first or pass --input-root with a populated raw market directory."
+            "Run pull-from-pc2 on PC1, or pass --input-root with a populated market directory."
         )
 
     frames = [_read_market_file(path) for path in files]
