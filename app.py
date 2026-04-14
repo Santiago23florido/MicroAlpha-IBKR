@@ -2,445 +2,188 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
 from contextlib import suppress
-from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Sequence
 
+from backtest.runner import run_backtest_stub
 from broker.ib_client import IBClientError
-from broker.orders import (
-    calculate_marketable_limit_price,
-    create_bracket_order,
-    create_limit_order,
-    create_market_order,
-)
-from config import Settings
+from config import Settings, load_settings
 from engine.runtime import RuntimeServices, build_runtime
+from ingestion.collector import collect_market_data
 from models.train_baseline import train_baseline_model
 from models.train_deep import train_deep_model
-from risk.risk_manager import ExecutionRequest
+from monitoring.healthcheck import build_healthcheck_report
+from monitoring.sync import sync_data_artifacts
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="MicroAlpha IBKR ORB + microstructure paper-trading system.",
+        description=(
+            "MicroAlpha-IBKR phase 1 foundation. "
+            "Use development mode on PC1 for research/backtesting/training and deploy mode on PC2 for collection and operations."
+        )
+    )
+    parser.add_argument("--env-file", default=".env", help="Path to the environment file.")
+    parser.add_argument("--config-dir", default="config", help="Path to the YAML configuration directory.")
+    parser.add_argument(
+        "--environment",
+        choices=["development", "deploy"],
+        help="Override the target environment declared by config and .env.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("test-connection", aliases=["check-connection"], help="Verify the IB Gateway paper connection.")
-    subparsers.add_parser("server-time", help="Request current IB server time.")
-    subparsers.add_parser("account-summary", help="Request the current account summary.")
-    subparsers.add_parser("positions", help="Request current positions.")
-    subparsers.add_parser("open-orders", help="Request currently open orders.")
+    collect_parser = subparsers.add_parser("collect", help="Run one safe collection cycle and persist raw artifacts.")
+    collect_parser.add_argument("--symbol", help="Override the configured symbol.")
+    collect_parser.add_argument("--duration", default="1 D", help="Historical duration passed to IBKR.")
+    collect_parser.add_argument("--bar-size", default="1 min", help="Historical bar size passed to IBKR.")
+    collect_parser.add_argument("--output-root", help="Optional raw-data destination override.")
 
-    snapshot_parser = subparsers.add_parser(
-        "market-snapshot",
-        aliases=["snapshot"],
-        help="Request the latest market snapshot for the configured symbol.",
-    )
-    snapshot_parser.add_argument("--symbol", help="Override the configured symbol for data only.")
+    train_parser = subparsers.add_parser("train", help="Train the baseline or deep model from a local dataset.")
+    train_parser.add_argument("--model-type", required=True, choices=["baseline", "deep"])
+    train_parser.add_argument("--data-path", help="CSV or Parquet dataset for research mode.")
+    train_parser.add_argument("--model-name", help="Optional model display name override.")
+    train_parser.add_argument("--epochs", type=int, default=6, help="Only used for deep training.")
+    train_parser.add_argument("--no-set-active", action="store_true", help="Do not set the new artifact as active.")
+
+    backtest_parser = subparsers.add_parser("backtest", help="Validate backtest inputs and dataset plumbing.")
+    backtest_parser.add_argument("--data-path", help="CSV or Parquet dataset for research mode.")
+    backtest_parser.add_argument("--symbol", help="Override the configured symbol.")
 
     session_parser = subparsers.add_parser(
         "run-session",
         aliases=["session-cycle", "session"],
-        help="Run one ORB + model + risk session cycle.",
+        help="Run one ORB + feature + model + risk session cycle.",
     )
     session_parser.add_argument(
         "--paper",
         action="store_true",
-        help="Explicitly request paper execution if all safety gates allow it.",
-    )
-    session_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Keep the session read-only. This is the default safe behavior.",
+        help="Request paper execution. Safety gates in config and risk still apply.",
     )
 
-    baseline_parser = subparsers.add_parser("train-baseline", help="Train the interpretable baseline model.")
-    baseline_parser.add_argument("--data-path", help="CSV or Parquet dataset for research mode.")
-    baseline_parser.add_argument("--model-name", default="baseline_logreg")
-    baseline_parser.add_argument("--no-set-active", action="store_true")
-
-    deep_parser = subparsers.add_parser("train-deep", help="Train the temporal deep model.")
-    deep_parser.add_argument("--data-path", help="CSV or Parquet dataset for research mode.")
-    deep_parser.add_argument("--model-name", default="deep_lob_lite")
-    deep_parser.add_argument("--epochs", type=int, default=6)
-    deep_parser.add_argument("--no-set-active", action="store_true")
-
-    list_parser = subparsers.add_parser(
-        "list-models",
-        aliases=["models"],
-        help="List registered baseline and deep models.",
+    dashboard_parser = subparsers.add_parser(
+        "dashboard",
+        aliases=["launch-ui", "ui"],
+        help="Launch the local Streamlit dashboard.",
     )
-    list_parser.add_argument("--model-type", choices=["baseline", "deep"])
+    dashboard_parser.add_argument("--host", help="Override the Streamlit host.")
+    dashboard_parser.add_argument("--port", type=int, help="Override the Streamlit port.")
 
-    set_active_parser = subparsers.add_parser("set-active-model", help="Select the active baseline or deep model.")
-    set_active_parser.add_argument("--model-type", required=True, choices=["baseline", "deep"])
-    set_active_parser.add_argument("--artifact-id", required=True)
+    healthcheck_parser = subparsers.add_parser(
+        "healthcheck",
+        aliases=["check-connection"],
+        help="Inspect config, paths, and optionally broker connectivity.",
+    )
+    healthcheck_parser.add_argument("--skip-broker", action="store_true", help="Do not attempt the IBKR connection.")
 
-    subparsers.add_parser(
-        "explain-latest-decision",
-        aliases=["latest-decision"],
+    snapshot_parser = subparsers.add_parser("snapshot", help="Fetch the current market snapshot for one symbol.")
+    snapshot_parser.add_argument("--symbol", help="Override the configured symbol.")
+
+    latest_parser = subparsers.add_parser(
+        "latest-decision",
+        aliases=["explain-latest-decision"],
         help="Show the most recent stored decision.",
     )
+    latest_parser.add_argument("--limit", type=int, default=1, help="Reserved for future expansion.")
 
-    place_test_parser = subparsers.add_parser(
-        "place-test-order",
-        aliases=["test-order"],
-        help="Intentionally place or preview one tiny marketable-limit paper order.",
+    models_parser = subparsers.add_parser(
+        "models",
+        aliases=["list-models"],
+        help="List active and registered model artifacts.",
     )
-    _add_common_order_arguments(place_test_parser)
-    place_test_parser.add_argument(
-        "--confirm-paper",
-        action="store_true",
-        help="Required before a real paper order can be sent when all safety flags allow it.",
-    )
+    models_parser.add_argument("--model-type", choices=["baseline", "deep"])
 
-    cancel_parser = subparsers.add_parser("cancel-order", help="Cancel one tracked order by id.")
-    cancel_parser.add_argument("--order-id", required=True, type=int)
+    sync_parser = subparsers.add_parser("sync-data", help="Prepare or execute a local sync of data artifacts.")
+    sync_parser.add_argument("--destination-root", required=True, help="Destination root for the sync plan or copy.")
+    sync_parser.add_argument("--execute", action="store_true", help="Perform the file copy instead of a dry-run plan.")
 
-    close_parser = subparsers.add_parser("close-position", help="Manually close the configured symbol position.")
-    close_parser.add_argument("--symbol", help="Override the configured symbol.")
-
-    launch_parser = subparsers.add_parser(
-        "launch-ui",
-        aliases=["ui"],
-        help="Launch the local Streamlit UI.",
-    )
-    launch_parser.add_argument("--host", help="Override the UI host.")
-    launch_parser.add_argument("--port", type=int, help="Override the UI port.")
-
-    market_order_parser = subparsers.add_parser("market-order", help="Legacy compatibility market order command.")
-    _add_common_order_arguments(market_order_parser)
-
-    limit_order_parser = subparsers.add_parser("limit-order", help="Legacy compatibility limit order command.")
-    _add_common_order_arguments(limit_order_parser)
-    limit_order_parser.add_argument("--limit-price", required=True, type=float)
-
-    bracket_order_parser = subparsers.add_parser("bracket-order", help="Legacy compatibility bracket order command.")
-    _add_common_order_arguments(bracket_order_parser)
-    bracket_order_parser.add_argument("--entry-limit", required=True, type=float)
-    bracket_order_parser.add_argument("--take-profit", required=True, type=float)
-    bracket_order_parser.add_argument("--stop-loss", required=True, type=float)
-
+    subparsers.add_parser("show-config", aliases=["config"], help="Print the effective merged configuration.")
     return parser
 
 
-def _add_common_order_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--symbol", help="Override the configured symbol.")
-    parser.add_argument("--action", required=True, choices=["BUY", "SELL"], help="Order side.")
-    parser.add_argument("--quantity", type=int, help="Whole-share quantity.")
-
-
-def print_result(payload: Any) -> None:
-    print(json.dumps(payload, indent=2, sort_keys=False, default=str))
-
-
-def handle_place_test_order(runtime: RuntimeServices, args: argparse.Namespace) -> int:
-    settings = runtime.settings
-    symbol = (args.symbol or settings.ib_symbol).upper()
-    quantity = args.quantity or settings.default_order_quantity
-    try:
-        runtime.client.connect()
-        snapshot = runtime.client.get_market_snapshot(
-            symbol=symbol,
-            exchange=settings.ib_exchange,
-            currency=settings.ib_currency,
-        )
-        limit_price = calculate_marketable_limit_price(
-            action=args.action,
-            bid=_coerce_float(snapshot.get("bid")),
-            ask=_coerce_float(snapshot.get("ask")),
-            last=_coerce_float(snapshot.get("last")),
-            buffer_bps=settings.trading.entry_limit_buffer_bps,
-        )
-        request = ExecutionRequest(
-            symbol=symbol,
-            action=args.action.upper(),
-            quantity=quantity,
-            order_type="limit",
-            explicit_command=True,
-            limit_price=limit_price,
-        )
-        decision = runtime.risk_manager.evaluate_execution_request(request)
-        preview = {
-            "symbol": symbol,
-            "action": args.action.upper(),
-            "quantity": quantity,
-            "order_type": "marketable_limit",
-            "limit_price": limit_price,
-            "source_bid": snapshot.get("bid"),
-            "source_ask": snapshot.get("ask"),
-            "source_last": snapshot.get("last"),
-        }
-        if not decision.approved:
-            print_result({"status": "blocked", "reason": decision.reason, "preview": preview})
-            return 2
-        if not decision.submit_to_broker:
-            print_result({"status": "dry-run", "reason": decision.reason, "preview": preview})
-            return 0
-        if not args.confirm_paper:
-            print_result(
-                {
-                    "status": "blocked",
-                    "reason": (
-                        "Real paper submission requires --confirm-paper in addition to SAFE_TO_TRADE=true and DRY_RUN=false."
-                    ),
-                    "preview": preview,
-                }
-            )
-            return 2
-        payload = runtime.client.submit_marketable_limit_order(
-            symbol=symbol,
-            action=args.action.upper(),
-            quantity=quantity,
-            bid=_coerce_float(snapshot.get("bid")),
-            ask=_coerce_float(snapshot.get("ask")),
-            last=_coerce_float(snapshot.get("last")),
-            buffer_bps=settings.trading.entry_limit_buffer_bps,
-            exchange=settings.ib_exchange,
-            currency=settings.ib_currency,
-        )
-        runtime.trade_store.append_trade(
-            _trade_event(
-                symbol=symbol,
-                event_type="manual_test_order_submitted",
-                action=args.action.upper(),
-                quantity=quantity,
-                status=str(payload.get("status", "Submitted")),
-                order_id=payload.get("order_id"),
-                price=limit_price,
-                message="Manual marketable-limit paper order submitted.",
-                payload=payload,
-            )
-        )
-        print_result(payload)
-        return 0
-    finally:
-        with suppress(Exception):
-            runtime.client.disconnect()
-
-
-def handle_legacy_order(runtime: RuntimeServices, args: argparse.Namespace) -> int:
-    symbol = (args.symbol or runtime.settings.ib_symbol).upper()
-    quantity = args.quantity or runtime.settings.default_order_quantity
-    if args.command == "market-order":
-        request = ExecutionRequest(symbol, args.action.upper(), quantity, "market", True)
-    elif args.command == "limit-order":
-        request = ExecutionRequest(
-            symbol,
-            args.action.upper(),
-            quantity,
-            "limit",
-            True,
-            limit_price=float(args.limit_price),
-        )
-    else:
-        request = ExecutionRequest(
-            symbol,
-            args.action.upper(),
-            quantity,
-            "bracket",
-            True,
-            limit_price=float(args.entry_limit),
-            take_profit_price=float(args.take_profit),
-            stop_loss_price=float(args.stop_loss),
-        )
-    decision = runtime.risk_manager.evaluate_execution_request(request)
-    if not decision.approved:
-        print_result({"status": "blocked", "reason": decision.reason, "request": request.__dict__})
-        return 2
-    if not decision.submit_to_broker:
-        print_result({"status": "dry-run", "reason": decision.reason, "preview": preview_legacy_order(request)})
-        return 0
-
-    try:
-        runtime.client.connect()
-        if request.order_type == "market":
-            payload = runtime.client.submit_market_order(
-                symbol=symbol,
-                action=request.action,
-                quantity=quantity,
-                exchange=runtime.settings.ib_exchange,
-                currency=runtime.settings.ib_currency,
-            )
-        elif request.order_type == "limit":
-            payload = runtime.client.submit_limit_order(
-                symbol=symbol,
-                action=request.action,
-                quantity=quantity,
-                limit_price=float(request.limit_price),
-                exchange=runtime.settings.ib_exchange,
-                currency=runtime.settings.ib_currency,
-            )
-        else:
-            payload = runtime.client.submit_bracket_order(
-                symbol=symbol,
-                action=request.action,
-                quantity=quantity,
-                entry_limit_price=float(request.limit_price),
-                take_profit_price=float(request.take_profit_price),
-                stop_loss_price=float(request.stop_loss_price),
-                exchange=runtime.settings.ib_exchange,
-                currency=runtime.settings.ib_currency,
-            )
-        print_result(payload)
-        return 0
-    finally:
-        with suppress(Exception):
-            runtime.client.disconnect()
-
-
-def handle_close_position(runtime: RuntimeServices, symbol: str) -> int:
-    try:
-        runtime.client.connect()
-        positions = runtime.client.get_positions()
-        matching_position = next(
-            (row for row in positions if row["symbol"].upper() == symbol.upper()),
-            None,
-        )
-        if matching_position is None:
-            print_result({"status": "error", "message": f"No position found for {symbol.upper()}."})
-            return 1
-        decision = runtime.risk_manager.evaluate_position_close(
-            symbol=symbol,
-            position_quantity=float(matching_position["position"]),
-            explicit_command=True,
-        )
-        if not decision.approved:
-            print_result({"status": "blocked", "reason": decision.reason, "position": matching_position})
-            return 2
-        if not decision.submit_to_broker:
-            preview = create_market_order(
-                "SELL" if float(matching_position["position"]) > 0 else "BUY",
-                int(abs(float(matching_position["position"]))),
-            )
-            print_result(
-                {
-                    "status": "dry-run",
-                    "reason": decision.reason,
-                    "position": matching_position,
-                    "preview": {
-                        "action": preview.action,
-                        "quantity": preview.totalQuantity,
-                        "order_type": preview.orderType,
-                    },
-                }
-            )
-            return 0
-        payload = runtime.client.close_position(
-            symbol=symbol.upper(),
-            exchange=runtime.settings.ib_exchange,
-            currency=runtime.settings.ib_currency,
-        )
-        print_result(payload)
-        return 0
-    finally:
-        with suppress(Exception):
-            runtime.client.disconnect()
-
-
-def preview_legacy_order(request: ExecutionRequest) -> dict[str, Any]:
-    if request.order_type == "market":
-        order = create_market_order(request.action, request.quantity)
-        return {"order_type": order.orderType, "action": order.action, "quantity": order.totalQuantity}
-    if request.order_type == "limit":
-        order = create_limit_order(request.action, request.quantity, float(request.limit_price))
-        return {
-            "order_type": order.orderType,
-            "action": order.action,
-            "quantity": order.totalQuantity,
-            "limit_price": order.lmtPrice,
-        }
-    orders = create_bracket_order(
-        parent_order_id=1,
-        action=request.action,
-        quantity=request.quantity,
-        entry_limit_price=float(request.limit_price),
-        take_profit_price=float(request.take_profit_price),
-        stop_loss_price=float(request.stop_loss_price),
-    )
-    return {
-        "order_type": "BRACKET",
-        "legs": [
-            {
-                "order_id": order.orderId,
-                "parent_id": getattr(order, "parentId", 0) or None,
-                "action": order.action,
-                "quantity": order.totalQuantity,
-                "type": order.orderType,
-                "limit_price": getattr(order, "lmtPrice", None) or None,
-                "stop_price": getattr(order, "auxPrice", None) or None,
-                "transmit": order.transmit,
-            }
-            for order in orders
-        ],
-    }
-
-
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
-    runtime = build_runtime()
+    args = parser.parse_args(argv)
+    settings = load_settings(args.env_file, config_dir=args.config_dir, environment=args.environment)
+
     try:
-        if args.command in {"test-connection", "check-connection"}:
-            print_result(runtime.session_engine.test_connection())
+        if args.command in {"show-config", "config"}:
+            print_result(settings.as_dict())
             return 0
 
-        if args.command == "server-time":
-            return with_connected_client(runtime, lambda: runtime.client.get_server_time())
+        if args.command in {"healthcheck", "check-connection"}:
+            return handle_healthcheck(args, settings)
 
-        if args.command == "account-summary":
-            return with_connected_client(runtime, lambda: runtime.client.get_account_summary())
+        if args.command == "backtest":
+            print_result(
+                run_backtest_stub(
+                    settings,
+                    data_path=args.data_path,
+                    symbol=args.symbol,
+                )
+            )
+            return 0
 
-        if args.command == "positions":
-            return with_connected_client(runtime, lambda: runtime.client.get_positions())
+        if args.command == "sync-data":
+            print_result(
+                sync_data_artifacts(
+                    settings,
+                    destination_root=args.destination_root,
+                    execute=args.execute,
+                )
+            )
+            return 0
 
-        if args.command == "open-orders":
-            return with_connected_client(runtime, lambda: runtime.client.get_open_orders())
+        runtime = build_runtime(
+            env_file=args.env_file,
+            config_dir=args.config_dir,
+            environment=args.environment,
+        )
 
-        if args.command in {"market-snapshot", "snapshot"}:
-            symbol = (args.symbol or runtime.settings.ib_symbol).upper()
+        if args.command == "collect":
+            print_result(
+                collect_market_data(
+                    runtime.settings,
+                    runtime.client,
+                    symbol=args.symbol,
+                    duration=args.duration,
+                    bar_size=args.bar_size,
+                    output_root=args.output_root,
+                )
+            )
+            return 0
+
+        if args.command == "train":
+            return handle_train(runtime, args)
+
+        if args.command in {"run-session", "session-cycle", "session"}:
+            print_result(runtime.session_engine.run_cycle(execute_requested=args.paper))
+            return 0
+
+        if args.command in {"dashboard", "launch-ui", "ui"}:
+            return launch_dashboard(runtime.settings, env_file=args.env_file, config_dir=args.config_dir, environment=args.environment, host=args.host, port=args.port)
+
+        if args.command == "snapshot":
             return with_connected_client(
                 runtime,
                 lambda: runtime.client.get_market_snapshot(
-                    symbol=symbol,
+                    symbol=(args.symbol or runtime.settings.ib_symbol).upper(),
                     exchange=runtime.settings.ib_exchange,
                     currency=runtime.settings.ib_currency,
                 ),
             )
 
-        if args.command in {"run-session", "session-cycle", "session"}:
-            payload = runtime.session_engine.run_cycle(execute_requested=bool(args.paper and not args.dry_run))
-            print_result(payload)
+        if args.command in {"latest-decision", "explain-latest-decision"}:
+            print_result(runtime.session_engine.explain_latest_decision())
             return 0
 
-        if args.command == "train-baseline":
-            payload = train_baseline_model(
-                runtime.settings,
-                data_path=args.data_path,
-                model_name=args.model_name,
-                set_active=not args.no_set_active,
-            )
-            print_result(payload)
-            return 0
-
-        if args.command == "train-deep":
-            payload = train_deep_model(
-                runtime.settings,
-                data_path=args.data_path,
-                model_name=args.model_name,
-                epochs=args.epochs,
-                set_active=not args.no_set_active,
-            )
-            print_result(payload)
-            return 0
-
-        if args.command in {"list-models", "models"}:
+        if args.command in {"models", "list-models"}:
             print_result(
                 {
                     "active": {
@@ -451,45 +194,57 @@ def main() -> int:
                 }
             )
             return 0
-
-        if args.command == "set-active-model":
-            payload = runtime.model_registry.set_active_model(args.model_type, args.artifact_id)
-            print_result(payload)
-            return 0
-
-        if args.command in {"explain-latest-decision", "latest-decision"}:
-            print_result(runtime.session_engine.explain_latest_decision())
-            return 0
-
-        if args.command in {"place-test-order", "test-order"}:
-            return handle_place_test_order(runtime, args)
-
-        if args.command in {"market-order", "limit-order", "bracket-order"}:
-            return handle_legacy_order(runtime, args)
-
-        if args.command == "cancel-order":
-            return with_connected_client(runtime, lambda: runtime.client.cancel_order(args.order_id))
-
-        if args.command == "close-position":
-            symbol = (args.symbol or runtime.settings.ib_symbol).upper()
-            return handle_close_position(runtime, symbol)
-
-        if args.command in {"launch-ui", "ui"}:
-            return launch_ui(runtime.settings, host=args.host, port=args.port)
     except IBClientError as exc:
-        runtime.client.logger.error(str(exc))
         print_result({"status": "error", "message": str(exc)})
         return 1
+    except NotImplementedError as exc:
+        print_result({"status": "placeholder", "message": str(exc)})
+        return 2
     except Exception as exc:  # pragma: no cover
-        runtime.client.logger.exception("Unexpected application failure.")
         print_result(
             {
                 "status": "error",
-                "message": f"Unexpected failure. Check {runtime.settings.log_file}. Root cause: {exc}",
+                "message": f"Unexpected failure. Check {settings.log_file}. Root cause: {exc}",
             }
         )
         return 1
+
+    parser.print_help()
     return 2
+
+
+def handle_healthcheck(args: argparse.Namespace, settings: Settings) -> int:
+    if args.skip_broker:
+        print_result(build_healthcheck_report(settings))
+        return 0
+
+    runtime = build_runtime(
+        env_file=args.env_file,
+        config_dir=args.config_dir,
+        environment=args.environment,
+    )
+    print_result(build_healthcheck_report(runtime.settings, broker_client=runtime.client))
+    return 0
+
+
+def handle_train(runtime: RuntimeServices, args: argparse.Namespace) -> int:
+    if args.model_type == "baseline":
+        payload = train_baseline_model(
+            runtime.settings,
+            data_path=args.data_path,
+            model_name=args.model_name or "baseline_logreg",
+            set_active=not args.no_set_active,
+        )
+    else:
+        payload = train_deep_model(
+            runtime.settings,
+            data_path=args.data_path,
+            model_name=args.model_name or "deep_lob_lite",
+            epochs=args.epochs,
+            set_active=not args.no_set_active,
+        )
+    print_result(payload)
+    return 0
 
 
 def with_connected_client(runtime: RuntimeServices, callback) -> int:
@@ -502,7 +257,15 @@ def with_connected_client(runtime: RuntimeServices, callback) -> int:
             runtime.client.disconnect()
 
 
-def launch_ui(settings: Settings, *, host: str | None = None, port: int | None = None) -> int:
+def launch_dashboard(
+    settings: Settings,
+    *,
+    env_file: str | None = None,
+    config_dir: str | None = None,
+    environment: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
+) -> int:
     bind_host = host or settings.ui.host
     bind_port = port or settings.ui.port
     browser_host = "127.0.0.1" if bind_host in {"0.0.0.0", "127.0.0.1"} else bind_host
@@ -523,10 +286,18 @@ def launch_ui(settings: Settings, *, host: str | None = None, port: int | None =
         "--browser.gatherUsageStats",
         "false",
     ]
-    print(f"Launching UI at {browser_url}", flush=True)
+    env = os.environ.copy()
+    if env_file:
+        env["MICROALPHA_ENV_FILE"] = str(Path(env_file).resolve())
+    if config_dir:
+        env["MICROALPHA_CONFIG_DIR"] = str(Path(config_dir).resolve())
+    if environment:
+        env["MICROALPHA_ENV"] = environment
+
+    print(f"Launching dashboard at {browser_url}", flush=True)
     print(f"If the browser does not open, open {browser_url} manually.", flush=True)
     _open_browser_soon(browser_url)
-    return subprocess.run(command, check=False).returncode
+    return subprocess.run(command, env=env, check=False).returncode
 
 
 def _open_browser_soon(url: str) -> None:
@@ -538,38 +309,8 @@ def _open_browser_soon(url: str) -> None:
     threading.Thread(target=_worker, name="streamlit-browser-opener", daemon=True).start()
 
 
-def _trade_event(
-    *,
-    symbol: str,
-    event_type: str,
-    action: str,
-    quantity: float,
-    status: str,
-    message: str,
-    payload: dict[str, Any],
-    order_id: int | None = None,
-    price: float | None = None,
-):
-    from data.schemas import TradeLifecycleEvent
-
-    return TradeLifecycleEvent(
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        symbol=symbol,
-        event_type=event_type,
-        action=action,
-        quantity=quantity,
-        status=status,
-        order_id=order_id,
-        price=price,
-        message=message,
-        payload=payload,
-    )
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value in {None, ""}:
-        return None
-    return float(value)
+def print_result(payload: Any) -> None:
+    print(json.dumps(payload, indent=2, sort_keys=False, default=str))
 
 
 if __name__ == "__main__":

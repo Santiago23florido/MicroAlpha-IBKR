@@ -1,5 +1,6 @@
 ibapi
 python-dotenv
+pyyaml
 numpy
 pandas
 pyarrow
