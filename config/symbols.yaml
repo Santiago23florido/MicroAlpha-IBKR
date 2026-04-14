@@ -1,0 +1,3 @@
+default_symbol: SPY
+supported_symbols:
+  - SPY

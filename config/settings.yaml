@@ -1,0 +1,77 @@
+defaults:
+  environment: development
+  data_root: data
+  log_level: INFO
+  broker_mode: paper
+  collector_enabled: false
+  training_enabled: true
+  backtest_enabled: true
+  safe_to_trade: false
+  ib_host: 127.0.0.1
+  ib_port: 4002
+  ib_client_id: 1
+  ib_ui_client_id: 101
+  ib_exchange: SMART
+  ib_currency: USD
+  ib_account_summary_group: All
+  ib_request_timeout_seconds: 15
+  ib_order_follow_up_seconds: 5
+  timezone: America/New_York
+  paths:
+    raw_dir: data/raw
+    processed_dir: data/processed
+    feature_dir: data/features
+    model_dir: data/models
+    model_artifacts_dir: data/models/artifacts
+    log_dir: data/logs
+    report_dir: data/reports
+    runtime_db_path: data/processed/runtime/microalpha.db
+    log_file: data/logs/microalpha.log
+    execution_log_file: data/reports/executions.csv
+    model_registry_path: data/models/artifacts/registry.json
+  session:
+    orb_start: "09:30"
+    orb_end: "09:45"
+    primary_session_end: "11:30"
+    secondary_session_start: "13:30"
+    secondary_session_end: "15:00"
+    enable_secondary_session: false
+    flatten_before_close_minutes: 5
+    regular_market_open: "09:30"
+    regular_market_close: "16:00"
+  trading:
+    default_order_quantity: 1
+    dry_run: true
+    safe_to_trade: false
+    allow_shorts: false
+    data_mode: paper_or_local
+    allow_session_execution: false
+    entry_limit_buffer_bps: 2.0
+    cost_buffer_bps: 2.5
+    max_spread_bps: 8.0
+    max_hold_minutes: 30
+  models:
+    model_prob_threshold: 0.58
+    target_horizon_minutes: 3
+    baseline_weight: 0.4
+    deep_weight: 0.6
+    sequence_length: 16
+  ui:
+    host: 127.0.0.1
+    port: 8501
+    title: MicroAlpha IBKR
+
+environments:
+  development:
+    collector_enabled: false
+    training_enabled: true
+    backtest_enabled: true
+    safe_to_trade: false
+    broker_mode: paper
+  deploy:
+    collector_enabled: true
+    training_enabled: false
+    backtest_enabled: false
+    safe_to_trade: false
+    broker_mode: paper
+    log_level: INFO

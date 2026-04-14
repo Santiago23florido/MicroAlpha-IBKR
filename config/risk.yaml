@@ -1,0 +1,10 @@
+defaults:
+  max_trades_per_day: 2
+  max_daily_loss_pct: 1.0
+  max_open_positions: 1
+
+environments:
+  development:
+    max_open_positions: 1
+  deploy:
+    max_open_positions: 1
