@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 1 collector entrypoint for PC2-style raw data capture."""
+"""Phase 2 collector entrypoint for the PC2 market data node."""
 
 from __future__ import annotations
 

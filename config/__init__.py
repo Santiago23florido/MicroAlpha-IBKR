@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from config.loader import (
     BrokerSettings,
+    CollectorSettings,
     DeploymentSettings,
     ModelSettings,
     PathSettings,
@@ -16,6 +17,7 @@ from config.loader import (
 
 __all__ = [
     "BrokerSettings",
+    "CollectorSettings",
     "DeploymentSettings",
     "ModelSettings",
     "PathSettings",

@@ -107,6 +107,7 @@ class BrokerSettings:
     ib_port: int = 4002
     ib_client_id: int = 1
     ib_ui_client_id: int = 101
+    ib_collector_client_id: int = 201
     ib_symbol: str = "SPY"
     ib_exchange: str = "SMART"
     ib_currency: str = "USD"
@@ -181,11 +182,23 @@ class UISettings:
 
 
 @dataclass(frozen=True)
+class CollectorSettings:
+    mode: str = "snapshot_polling"
+    poll_interval_seconds: float = 5.0
+    flush_interval_seconds: float = 30.0
+    batch_size: int = 50
+    reconnect_delay_seconds: float = 10.0
+    max_reconnect_attempts: int = 5
+    health_log_interval_seconds: float = 60.0
+
+
+@dataclass(frozen=True)
 class PathSettings:
     project_root: str = "."
     config_dir: str = "config"
     data_root: str = "data"
     raw_dir: str = "data/raw"
+    market_raw_dir: str = "data/raw/market"
     processed_dir: str = "data/processed"
     feature_dir: str = "data/features"
     model_dir: str = "data/models"
@@ -216,6 +229,7 @@ class Settings:
     models: ModelSettings
     storage: StorageSettings
     ui: UISettings
+    collector: CollectorSettings = field(default_factory=CollectorSettings)
     paths: PathSettings = field(default_factory=PathSettings)
     deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
 
@@ -234,6 +248,10 @@ class Settings:
     @property
     def ib_ui_client_id(self) -> int:
         return self.broker.ib_ui_client_id
+
+    @property
+    def ib_collector_client_id(self) -> int:
+        return self.broker.ib_collector_client_id
 
     @property
     def ib_symbol(self) -> str:
@@ -388,6 +406,10 @@ def load_settings(
     data_root_raw = os.getenv("DATA_ROOT", str(merged_settings.get("data_root", "data")))
     path_overrides = merged_settings.get("paths", {})
     raw_dir_raw = str(path_overrides.get("raw_dir", Path(data_root_raw) / "raw"))
+    market_raw_dir_raw = os.getenv(
+        "MARKET_RAW_DIR",
+        str(path_overrides.get("market_raw_dir", Path(raw_dir_raw) / "market")),
+    )
     processed_dir_raw = str(path_overrides.get("processed_dir", Path(data_root_raw) / "processed"))
     feature_dir_raw = str(path_overrides.get("feature_dir", Path(data_root_raw) / "features"))
     model_dir_raw = str(path_overrides.get("model_dir", Path(data_root_raw) / "models"))
@@ -416,6 +438,7 @@ def load_settings(
         config_dir=str(resolved_config_dir),
         data_root=_resolve_path(project_root, data_root_raw),
         raw_dir=_resolve_path(project_root, raw_dir_raw),
+        market_raw_dir=_resolve_path(project_root, market_raw_dir_raw),
         processed_dir=_resolve_path(project_root, processed_dir_raw),
         feature_dir=_resolve_path(project_root, feature_dir_raw),
         model_dir=_resolve_path(project_root, model_dir_raw),
@@ -455,6 +478,7 @@ def load_settings(
     trading_defaults = merged_settings.get("trading", {})
     model_defaults = merged_settings.get("models", {})
     ui_defaults = merged_settings.get("ui", {})
+    collector_defaults = merged_settings.get("collector", {})
 
     return Settings(
         broker=BrokerSettings(
@@ -462,6 +486,10 @@ def load_settings(
             ib_port=_parse_int("IB_PORT", int(merged_settings.get("ib_port", 4002))),
             ib_client_id=_parse_int("IB_CLIENT_ID", int(merged_settings.get("ib_client_id", 1))),
             ib_ui_client_id=_parse_int("IB_UI_CLIENT_ID", int(merged_settings.get("ib_ui_client_id", 101))),
+            ib_collector_client_id=_parse_int(
+                "IB_COLLECTOR_CLIENT_ID",
+                int(merged_settings.get("ib_collector_client_id", 201)),
+            ),
             ib_symbol=default_symbol,
             ib_exchange=os.getenv("IB_EXCHANGE", str(merged_settings.get("ib_exchange", "SMART"))).upper(),
             ib_currency=os.getenv("IB_CURRENCY", str(merged_settings.get("ib_currency", "USD"))).upper(),
@@ -590,6 +618,33 @@ def load_settings(
             host=os.getenv("UI_HOST", str(ui_defaults.get("host", "127.0.0.1"))),
             port=_parse_int("UI_PORT", int(ui_defaults.get("port", 8501))),
             title=os.getenv("UI_TITLE", str(ui_defaults.get("title", "MicroAlpha IBKR"))),
+        ),
+        collector=CollectorSettings(
+            mode=os.getenv("COLLECTOR_MODE", str(collector_defaults.get("mode", "snapshot_polling"))),
+            poll_interval_seconds=_parse_float(
+                "COLLECTOR_POLL_INTERVAL_SECONDS",
+                float(collector_defaults.get("poll_interval_seconds", 5.0)),
+            ),
+            flush_interval_seconds=_parse_float(
+                "COLLECTOR_FLUSH_INTERVAL_SECONDS",
+                float(collector_defaults.get("flush_interval_seconds", 30.0)),
+            ),
+            batch_size=_parse_int(
+                "COLLECTOR_BATCH_SIZE",
+                int(collector_defaults.get("batch_size", 50)),
+            ),
+            reconnect_delay_seconds=_parse_float(
+                "COLLECTOR_RECONNECT_DELAY_SECONDS",
+                float(collector_defaults.get("reconnect_delay_seconds", 10.0)),
+            ),
+            max_reconnect_attempts=_parse_int(
+                "COLLECTOR_MAX_RECONNECT_ATTEMPTS",
+                int(collector_defaults.get("max_reconnect_attempts", 5)),
+            ),
+            health_log_interval_seconds=_parse_float(
+                "COLLECTOR_HEALTH_LOG_INTERVAL_SECONDS",
+                float(collector_defaults.get("health_log_interval_seconds", 60.0)),
+            ),
         ),
         paths=paths,
         deployment=deployment,
