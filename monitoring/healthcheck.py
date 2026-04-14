@@ -31,6 +31,10 @@ def build_healthcheck_report(
             "data_root": _path_status(settings.paths.data_root),
             "raw_dir": _path_status(settings.paths.raw_dir),
             "market_raw_dir": _path_status(settings.paths.market_raw_dir),
+            "import_root": _path_status(settings.paths.import_root),
+            "import_market_dir": _path_status(settings.paths.import_market_dir),
+            "import_meta_dir": _path_status(settings.paths.import_meta_dir),
+            "import_log_dir": _path_status(settings.paths.import_log_dir),
             "processed_dir": _path_status(settings.paths.processed_dir),
             "feature_dir": _path_status(settings.paths.feature_dir),
             "model_dir": _path_status(settings.paths.model_dir),
@@ -38,6 +42,8 @@ def build_healthcheck_report(
             "report_dir": _path_status(settings.paths.report_dir),
             "runtime_db_parent": _path_status(Path(settings.runtime_db_path).parent),
             "model_registry_parent": _path_status(Path(settings.models.registry_path).parent),
+            "transfer_log_parent": _path_status(Path(settings.paths.transfer_log_path).parent),
+            "transfer_report_dir": _path_status(settings.paths.transfer_report_dir),
         },
         "broker": {
             "configured": {
@@ -62,33 +68,32 @@ def build_healthcheck_report(
             "output_root": str(settings.paths.market_raw_dir),
             "output_root_writable": _path_is_writable(settings.paths.market_raw_dir),
         },
-        "sync": {
-            "enabled": settings.deployment.sync_enabled,
-            "drive_root": _path_status(settings.sync.google_drive_root) if settings.sync.google_drive_root else None,
-            "drive_subdirectory": settings.sync.drive_subdirectory,
-            "drive_base_dir": str(
-                (Path(settings.sync.google_drive_root).expanduser().resolve() / settings.sync.drive_subdirectory)
-                if settings.sync.google_drive_root
-                else ""
-            ),
+        "lan_sync": {
+            "network_root": _path_status(settings.lan_sync.pc2_network_root) if settings.lan_sync.pc2_network_root else None,
+            "source_market_subdir": settings.lan_sync.source_market_subdir,
+            "source_meta_subdir": settings.lan_sync.source_meta_subdir,
+            "source_log_subdir": settings.lan_sync.source_log_subdir,
             "categories": {
-                "raw": settings.sync.raw_enabled,
-                "features": settings.sync.features_enabled,
-                "sqlite": settings.sync.sqlite_enabled,
-                "logs": settings.sync.logs_enabled,
+                "raw": settings.lan_sync.include_raw,
+                "meta": settings.lan_sync.include_meta,
+                "logs": settings.lan_sync.include_logs,
             },
-            "delete_after_sync": settings.sync.delete_after_sync,
-            "delete_min_age_hours": settings.sync.delete_min_age_hours,
-            "retention_days_local": settings.sync.retention_days_local,
-            "dry_run": settings.sync.dry_run,
-            "sqlite_source_path": str(settings.sync.sqlite_source_path),
-            "sqlite_backup_dir": _path_status(settings.paths.sqlite_backup_dir),
-            "sync_report_dir": _path_status(settings.paths.sync_report_dir),
+            "overwrite_policy": settings.lan_sync.overwrite_policy,
+            "validate_parquet": settings.lan_sync.validate_parquet,
+            "dry_run": settings.lan_sync.dry_run,
+            "allowed_symbols": list(settings.lan_sync.allowed_symbols or settings.supported_symbols),
+            "transfer_log_path": str(settings.paths.transfer_log_path),
+            "transfer_report_dir": _path_status(settings.paths.transfer_report_dir),
         },
     }
     report["collector"]["ready"] = bool(
         report["collector"]["symbols"]
         and report["collector"]["output_root_writable"]
+    )
+    report["lan_sync"]["ready"] = bool(
+        settings.lan_sync.pc2_network_root
+        and report["paths"]["import_market_dir"]["is_dir"]
+        and report["paths"]["transfer_report_dir"]["is_dir"]
     )
 
     if broker_client is None:

@@ -98,10 +98,16 @@ def ensure_runtime_directories(settings: Settings) -> None:
         settings.paths.report_dir,
         settings.paths.sqlite_backup_dir,
         settings.paths.sync_report_dir,
+        settings.paths.import_root,
+        settings.paths.import_market_dir,
+        settings.paths.import_meta_dir,
+        settings.paths.import_log_dir,
+        settings.paths.transfer_report_dir,
         Path(settings.runtime_db_path).parent,
         Path(settings.execution_log_file).parent,
         Path(settings.log_file).parent,
         Path(settings.models.registry_path).parent,
+        Path(settings.paths.transfer_log_path).parent,
     ]
     for directory in directories:
         Path(directory).mkdir(parents=True, exist_ok=True)
