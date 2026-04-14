@@ -208,20 +208,18 @@ class FeaturePipelineSettings:
 
 
 @dataclass(frozen=True)
-class SyncSettings:
-    google_drive_root: str | None = None
-    drive_subdirectory: str = "microalpha"
-    raw_enabled: bool = True
-    features_enabled: bool = True
-    sqlite_enabled: bool = True
-    logs_enabled: bool = False
-    delete_after_sync: bool = False
-    delete_min_age_hours: float = 6.0
-    retention_days_local: int = 3
-    dry_run: bool = True
-    validate_checksum: bool = False
-    sqlite_backup_filename: str = "microalpha_runtime_backup.sqlite"
-    sqlite_source_path: str = "data/processed/runtime/microalpha.db"
+class LanSyncSettings:
+    pc2_network_root: str | None = None
+    source_market_subdir: str = "data/raw/market"
+    source_meta_subdir: str = "data/meta"
+    source_log_subdir: str = "data/logs"
+    include_raw: bool = True
+    include_meta: bool = True
+    include_logs: bool = False
+    dry_run: bool = False
+    overwrite_policy: str = "if_newer"
+    validate_parquet: bool = True
+    allowed_symbols: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -240,6 +238,12 @@ class PathSettings:
     report_dir: str = "data/reports"
     sqlite_backup_dir: str = "data/meta/sqlite_backups"
     sync_report_dir: str = "data/reports/sync"
+    import_root: str = "imports/from_pc2"
+    import_market_dir: str = "imports/from_pc2/raw/market"
+    import_meta_dir: str = "imports/from_pc2/meta"
+    import_log_dir: str = "imports/from_pc2/logs"
+    transfer_log_path: str = "imports/from_pc2/transfer_log.jsonl"
+    transfer_report_dir: str = "data/reports/lan_sync"
 
 
 @dataclass(frozen=True)
@@ -266,7 +270,7 @@ class Settings:
     ui: UISettings
     collector: CollectorSettings = field(default_factory=CollectorSettings)
     feature_pipeline: FeaturePipelineSettings = field(default_factory=FeaturePipelineSettings)
-    sync: SyncSettings = field(default_factory=SyncSettings)
+    lan_sync: LanSyncSettings = field(default_factory=LanSyncSettings)
     paths: PathSettings = field(default_factory=PathSettings)
     deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
 
@@ -482,6 +486,36 @@ def load_settings(
     report_dir_raw = _path_value(None, "report_dir", "reports")
     sqlite_backup_dir_raw = _path_value("SQLITE_BACKUP_DIR", "sqlite_backup_dir", "meta/sqlite_backups")
     sync_report_dir_raw = _path_value("SYNC_REPORT_DIR", "sync_report_dir", "reports/sync")
+    import_root_raw = _path_value("IMPORT_ROOT", "import_root", "../imports/from_pc2", explicit_default="imports/from_pc2")
+    import_market_dir_raw = _path_value(
+        "IMPORT_MARKET_DIR",
+        "import_market_dir",
+        "../imports/from_pc2/raw/market",
+        explicit_default="imports/from_pc2/raw/market",
+    )
+    import_meta_dir_raw = _path_value(
+        "IMPORT_META_DIR",
+        "import_meta_dir",
+        "../imports/from_pc2/meta",
+        explicit_default="imports/from_pc2/meta",
+    )
+    import_log_dir_raw = _path_value(
+        "IMPORT_LOG_DIR",
+        "import_log_dir",
+        "../imports/from_pc2/logs",
+        explicit_default="imports/from_pc2/logs",
+    )
+    transfer_log_path_raw = _path_value(
+        "TRANSFER_LOG_PATH",
+        "transfer_log_path",
+        "../imports/from_pc2/transfer_log.jsonl",
+        explicit_default="imports/from_pc2/transfer_log.jsonl",
+    )
+    transfer_report_dir_raw = _path_value(
+        "TRANSFER_REPORT_DIR",
+        "transfer_report_dir",
+        "reports/lan_sync",
+    )
     log_file_raw = _path_value("LOG_FILE", "log_file", "logs/microalpha.log")
     execution_log_raw = _path_value("EXECUTION_LOG_FILE", "execution_log_file", "reports/executions.csv")
     runtime_db_raw = _path_value("RUNTIME_DB_PATH", "runtime_db_path", "processed/runtime/microalpha.db")
@@ -502,6 +536,12 @@ def load_settings(
         report_dir=_resolve_path(project_root, report_dir_raw),
         sqlite_backup_dir=_resolve_path(project_root, sqlite_backup_dir_raw),
         sync_report_dir=_resolve_path(project_root, sync_report_dir_raw),
+        import_root=_resolve_path(project_root, import_root_raw),
+        import_market_dir=_resolve_path(project_root, import_market_dir_raw),
+        import_meta_dir=_resolve_path(project_root, import_meta_dir_raw),
+        import_log_dir=_resolve_path(project_root, import_log_dir_raw),
+        transfer_log_path=_resolve_path(project_root, transfer_log_path_raw),
+        transfer_report_dir=_resolve_path(project_root, transfer_report_dir_raw),
     )
 
     deployment = DeploymentSettings(
@@ -542,7 +582,7 @@ def load_settings(
     ui_defaults = merged_settings.get("ui", {})
     collector_defaults = merged_settings.get("collector", {})
     feature_pipeline_defaults = merged_settings.get("feature_pipeline", {})
-    sync_defaults = merged_settings.get("sync", {})
+    lan_sync_defaults = merged_settings.get("lan_sync", {})
 
     return Settings(
         broker=BrokerSettings(
@@ -796,67 +836,53 @@ def load_settings(
                 float(feature_pipeline_defaults.get("train_split_ratio", 0.8)),
             ),
         ),
-        sync=SyncSettings(
-            google_drive_root=runtime_env.get("GOOGLE_DRIVE_ROOT") or sync_defaults.get("google_drive_root") or None,
-            drive_subdirectory=runtime_env.get(
-                "GOOGLE_DRIVE_SUBDIR",
-                str(sync_defaults.get("drive_subdirectory", "microalpha")),
+        lan_sync=LanSyncSettings(
+            pc2_network_root=runtime_env.get("PC2_NETWORK_ROOT") or lan_sync_defaults.get("pc2_network_root") or None,
+            source_market_subdir=runtime_env.get(
+                "PC2_SOURCE_MARKET_SUBDIR",
+                str(lan_sync_defaults.get("source_market_subdir", "data/raw/market")),
             ),
-            raw_enabled=_parse_bool(
-                runtime_env,
-                "SYNC_RAW_ENABLED",
-                bool(sync_defaults.get("raw_enabled", True)),
+            source_meta_subdir=runtime_env.get(
+                "PC2_SOURCE_META_SUBDIR",
+                str(lan_sync_defaults.get("source_meta_subdir", "data/meta")),
             ),
-            features_enabled=_parse_bool(
-                runtime_env,
-                "SYNC_FEATURES_ENABLED",
-                bool(sync_defaults.get("features_enabled", True)),
+            source_log_subdir=runtime_env.get(
+                "PC2_SOURCE_LOG_SUBDIR",
+                str(lan_sync_defaults.get("source_log_subdir", "data/logs")),
             ),
-            sqlite_enabled=_parse_bool(
+            include_raw=_parse_bool(
                 runtime_env,
-                "SYNC_SQLITE_ENABLED",
-                bool(sync_defaults.get("sqlite_enabled", True)),
+                "LAN_INCLUDE_RAW",
+                bool(lan_sync_defaults.get("include_raw", True)),
             ),
-            logs_enabled=_parse_bool(
+            include_meta=_parse_bool(
                 runtime_env,
-                "SYNC_LOGS_ENABLED",
-                bool(sync_defaults.get("logs_enabled", False)),
+                "LAN_INCLUDE_META",
+                bool(lan_sync_defaults.get("include_meta", True)),
             ),
-            delete_after_sync=_parse_bool(
+            include_logs=_parse_bool(
                 runtime_env,
-                "DELETE_AFTER_SYNC",
-                bool(sync_defaults.get("delete_after_sync", False)),
-            ),
-            delete_min_age_hours=_parse_float(
-                runtime_env,
-                "DELETE_MIN_AGE_HOURS",
-                float(sync_defaults.get("delete_min_age_hours", 6.0)),
-            ),
-            retention_days_local=_parse_int(
-                runtime_env,
-                "RETENTION_DAYS_LOCAL",
-                int(sync_defaults.get("retention_days_local", 3)),
+                "LAN_INCLUDE_LOGS",
+                bool(lan_sync_defaults.get("include_logs", False)),
             ),
             dry_run=_parse_bool(
                 runtime_env,
-                "SYNC_DRY_RUN",
-                bool(sync_defaults.get("dry_run", True)),
+                "LAN_DRY_RUN",
+                bool(lan_sync_defaults.get("dry_run", False)),
             ),
-            validate_checksum=_parse_bool(
+            overwrite_policy=runtime_env.get(
+                "LAN_OVERWRITE_POLICY",
+                str(lan_sync_defaults.get("overwrite_policy", "if_newer")),
+            ),
+            validate_parquet=_parse_bool(
                 runtime_env,
-                "SYNC_VALIDATE_CHECKSUM",
-                bool(sync_defaults.get("validate_checksum", False)),
+                "LAN_VALIDATE_PARQUET",
+                bool(lan_sync_defaults.get("validate_parquet", True)),
             ),
-            sqlite_backup_filename=runtime_env.get(
-                "SQLITE_BACKUP_FILENAME",
-                str(sync_defaults.get("sqlite_backup_filename", "microalpha_runtime_backup.sqlite")),
-            ),
-            sqlite_source_path=_resolve_path(
-                project_root,
-                runtime_env.get(
-                    "SQLITE_SOURCE_PATH",
-                    str(sync_defaults.get("sqlite_source_path", runtime_db_raw)),
-                ),
+            allowed_symbols=_parse_csv(
+                runtime_env,
+                "LAN_ALLOWED_SYMBOLS",
+                _normalize_symbols(tuple(lan_sync_defaults.get("allowed_symbols", supported_symbols))),
             ),
         ),
         paths=paths,

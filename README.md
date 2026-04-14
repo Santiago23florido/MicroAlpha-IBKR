@@ -1,55 +1,43 @@
-# MicroAlpha-IBKR Phase 4 Drive Sync and Retention
+# MicroAlpha-IBKR Phase 4 LAN Transfer and Data Pipeline
 
 ## Purpose
 
-The repository is organized around a two-machine setup:
+This repository is organized around a two-machine setup on the same local network:
 
-- `PC1`: research, data validation, feature engineering, training, backtesting
-- `PC2`: IBKR collection, local persistence, operational monitoring, local retention, Drive sync
+- `PC2`: IBKR collector and operational data source
+- `PC1`: research, validation, feature engineering, model training, and evaluation
 
-Phase 1 organized the repo and CLI.
+Phase 1 organized the repository and CLI.
 Phase 2 added the collector on `PC2`.
-Phase 3 added the `PC1` data pipeline and feature generation.
-Phase 4 adds a safe sync-and-retention layer between `PC2` local storage and a Google Drive Desktop sync folder.
+This unified Phase 4 replaces the old cloud-sync idea with a local-network workflow:
 
-## Core Rule for Phase 4
+1. `PC2` writes raw market data locally
+2. `PC1` pulls new files from a shared network path on `PC2`
+3. `PC1` validates imported data
+4. `PC1` cleans and transforms imported raw data into feature parquet files
 
-SQLite must **not** run live from Google Drive.
+This phase does **not** implement autonomous trading, final execution logic, or cloud sync.
 
-The supported model is:
+## Architecture
 
-1. SQLite runs only on local disk on `PC2`
-2. raw parquet and feature parquet are written locally on `PC2`
-3. a sync process copies files into a local Google Drive folder
-4. SQLite is copied only as a snapshot backup
-5. local cleanup deletes files only after destination validation
+### PC2
 
-This phase does **not** implement autonomous trading, final execution, advanced modeling, RL, or cloud-native orchestration.
+- runs IBKR Gateway or TWS
+- runs the market data collector
+- persists operational raw parquet locally under `data/raw/market/`
+- optionally exposes `data/meta/` and `data/logs/` through the same network share
 
-## Phase 4 Scope
+### PC1
 
-Phase 4 adds:
+- mounts or accesses the shared folder from `PC2`
+- imports new files into `imports/from_pc2/`
+- validates imported parquet files
+- builds features into `data/features/`
 
-- validated sync into a local Google Drive Desktop folder
-- safe local snapshot backups of SQLite
-- configurable retention and cleanup on `PC2`
-- dry-run support for sync and cleanup
-- sync status reporting
-- logging and JSON reports for sync operations
+The intended ownership is:
 
-## PC2 Local + Drive Architecture
-
-The intended flow on `PC2` is now:
-
-1. collector writes local raw parquet into `data/raw/market/`
-2. later phases may write local features into `data/features/`
-3. runtime SQLite stays local, for example under `data/processed/runtime/`
-4. `python app.py backup-sqlite` creates a snapshot in `data/meta/sqlite_backups/`
-5. `python app.py sync-drive` copies local artifacts into the configured Google Drive Desktop folder
-6. copied files are validated locally in the Drive folder
-7. `python app.py cleanup-local` deletes only files that are both validated and old enough
-
-The Google Drive Desktop client is responsible for cloud upload. This code validates only the local copy inside the sync folder.
+- `PC2` = origin of truth for collection
+- `PC1` = local working copy for research
 
 ## Project Structure
 
@@ -62,9 +50,7 @@ MicroAlpha-IBKR/
 │   ├── symbols.yaml
 │   └── deployment.yaml
 ├── deployment/
-│   ├── drive_sync.py
-│   ├── retention.py
-│   └── sqlite_backup.py
+│   └── lan_sync.py
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
@@ -72,73 +58,88 @@ MicroAlpha-IBKR/
 │   │   └── market/
 │   ├── features/
 │   ├── processed/
-│   ├── meta/
-│   │   └── sqlite_backups/
 │   ├── logs/
 │   └── reports/
-│       └── sync/
+├── imports/
+│   └── from_pc2/
+│       ├── raw/
+│       │   └── market/
+│       ├── meta/
+│       ├── logs/
+│       └── transfer_log.jsonl
 ├── ingestion/
 │   └── collector.py
 ├── features/
 │   └── feature_pipeline.py
-├── labels/
-│   └── dataset_builder.py
 ├── monitoring/
 │   ├── healthcheck.py
 │   ├── logging.py
 │   └── data_quality.py
 ├── scripts/
 │   ├── run_collector.py
+│   ├── pull_from_pc2.py
+│   ├── validate_imports.py
 │   ├── build_features.py
-│   ├── sync_to_drive.py
-│   ├── cleanup_local.py
-│   ├── backup_sqlite.py
+│   ├── dev_sync_and_build.py
 │   └── healthcheck.py
 └── tests/
 ```
 
-## Configuration
+## Data Layout
 
-Configuration is merged from:
+### Source layout on PC2
 
-- `.env`
-- `config/settings.yaml`
-- `config/risk.yaml`
-- `config/symbols.yaml`
-- `config/deployment.yaml`
+The collector is expected to write under a local project root on `PC2`:
 
-Environment modes:
-
-- `development` for `PC1`
-- `deploy` for `PC2`
-
-### Phase 4 Settings
-
-Relevant sync settings:
-
-- `SYNC_ENABLED`
-- `GOOGLE_DRIVE_ROOT`
-- `GOOGLE_DRIVE_SUBDIR`
-- `SYNC_RAW_ENABLED`
-- `SYNC_FEATURES_ENABLED`
-- `SYNC_SQLITE_ENABLED`
-- `SYNC_LOGS_ENABLED`
-- `DELETE_AFTER_SYNC`
-- `DELETE_MIN_AGE_HOURS`
-- `RETENTION_DAYS_LOCAL`
-- `SYNC_DRY_RUN`
-- `SYNC_VALIDATE_CHECKSUM`
-- `SQLITE_BACKUP_FILENAME`
-- `SQLITE_SOURCE_PATH`
-- `SQLITE_BACKUP_DIR`
-- `SYNC_REPORT_DIR`
-
-Inspect the effective config with:
-
-```bash
-python app.py show-config
-python app.py --environment deploy show-config
+```text
+data/raw/market/YYYY-MM-DD/SYMBOL/*.parquet
+data/meta/
+data/logs/
 ```
+
+### Import layout on PC1
+
+Pulled files are copied into the local research workspace:
+
+```text
+imports/from_pc2/raw/market/YYYY-MM-DD/SYMBOL/*.parquet
+imports/from_pc2/meta/
+imports/from_pc2/logs/
+imports/from_pc2/transfer_log.jsonl
+```
+
+### Feature layout on PC1
+
+```text
+data/features/YYYY-MM-DD/SYMBOL.parquet
+```
+
+## Network Share Configuration
+
+This implementation assumes `PC1` can access a shared filesystem path from `PC2`.
+The application does **not** mount SMB shares itself; it works with an already reachable path.
+
+Examples:
+
+- Windows UNC path:
+
+```text
+\\PC2\microalpha
+```
+
+- Mounted SMB share on Linux or WSL:
+
+```text
+/mnt/pc2/microalpha
+```
+
+- Mounted network drive letter from Windows exposed into WSL:
+
+```text
+/mnt/z/microalpha
+```
+
+Set that location through `PC2_NETWORK_ROOT`.
 
 ## Installation
 
@@ -150,191 +151,101 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Google Drive Desktop Setup
+## Configuration
 
-This implementation assumes you have a local folder already managed by Google Drive Desktop, for example:
+Inspect the merged configuration:
 
-```text
-G:/My Drive
-/mnt/g/My Drive
-/home/<user>/Google Drive
+```bash
+python app.py show-config
+python app.py --environment development show-config
+python app.py --environment deploy show-config
 ```
 
-Set `GOOGLE_DRIVE_ROOT` to that local folder. The application will create or use a subdirectory inside it, controlled by `GOOGLE_DRIVE_SUBDIR`.
+The most important LAN settings are:
 
-Example:
-
-```dotenv
-GOOGLE_DRIVE_ROOT=/mnt/g/My Drive
-GOOGLE_DRIVE_SUBDIR=microalpha
-```
-
-The resulting local Drive base would be:
-
-```text
-/mnt/g/My Drive/microalpha
-```
-
-## Local Data Layout on PC2
-
-Raw collector output:
-
-```text
-data/raw/market/YYYY-MM-DD/SYMBOL/collector_*.parquet
-```
-
-Processed feature output:
-
-```text
-data/features/YYYY-MM-DD/SYMBOL.parquet
-```
-
-SQLite runtime database:
-
-```text
-data/processed/runtime/microalpha.db
-```
-
-Local SQLite snapshot backups:
-
-```text
-data/meta/sqlite_backups/*.sqlite
-```
-
-Sync reports:
-
-```text
-data/reports/sync/*.json
-```
-
-## Drive Destination Layout
-
-Inside the local Google Drive folder, files are copied into this structure:
-
-```text
-<GOOGLE_DRIVE_ROOT>/<GOOGLE_DRIVE_SUBDIR>/
-├── raw/
-│   └── market/YYYY-MM-DD/SYMBOL/collector_*.parquet
-├── features/
-│   └── YYYY-MM-DD/SYMBOL.parquet
-├── meta/
-│   └── sqlite/*.sqlite
-└── logs/
-```
-
-## Safety Model
-
-Before any local file is considered synced, the system validates:
-
-- destination file exists
-- destination size is greater than zero
-- destination size matches the source exactly
-- optional checksum match when enabled
-
-Files are never deleted without validation.
+- `PC2_NETWORK_ROOT`
+- `IMPORT_ROOT`
+- `IMPORT_MARKET_DIR`
+- `LAN_INCLUDE_RAW`
+- `LAN_INCLUDE_META`
+- `LAN_INCLUDE_LOGS`
+- `LAN_DRY_RUN`
+- `LAN_OVERWRITE_POLICY`
+- `LAN_VALIDATE_PARQUET`
+- `LAN_ALLOWED_SYMBOLS`
 
 ## Main Commands
 
-### Collector on PC2
+### PC2 collector
+
+Run on `PC2`:
 
 ```bash
 python app.py --environment deploy collect --once
 python app.py --environment deploy collect --max-cycles 120
 ```
 
-### Feature Build on PC1
+### Pull files from PC2 to PC1
+
+Run on `PC1`:
+
+```bash
+python app.py --environment development pull-from-pc2
+python app.py --environment development pull-from-pc2 --symbols SPY QQQ
+python app.py --environment development pull-from-pc2 --start-date 2026-04-14 --end-date 2026-04-16
+python app.py --environment development pull-from-pc2 --dry-run
+```
+
+Wrapper script:
+
+```bash
+python scripts/pull_from_pc2.py --environment development
+```
+
+### Validate imports on PC1
+
+```bash
+python app.py --environment development validate-imports
+python app.py --environment development validate-imports --symbols SPY
+```
+
+Wrapper script:
+
+```bash
+python scripts/validate_imports.py --environment development
+```
+
+### Build features on PC1
+
+By default this reads from `imports/from_pc2/raw/market/`.
 
 ```bash
 python app.py --environment development build-features
 python app.py --environment development build-features --symbols SPY QQQ
+python app.py --environment development build-features --start-date 2026-04-14 --end-date 2026-04-16
 ```
 
-### Sync to Google Drive
-
-Dry-run using configured defaults:
+Wrapper script:
 
 ```bash
-python app.py --environment deploy sync-drive
+python scripts/build_features.py --environment development
 ```
 
-Explicit execution:
+### One-command development flow
+
+This is the main convenience command for `PC1`:
 
 ```bash
-python app.py --environment deploy sync-drive --no-dry-run
+python app.py --environment development dev-sync-and-build
+python app.py --environment development dev-sync-and-build --symbols SPY
+python app.py --environment development dev-sync-and-build --dry-run
 ```
 
-Sync only selected categories:
+Wrapper script:
 
 ```bash
-python app.py --environment deploy sync-drive --categories raw features
+python scripts/dev_sync_and_build.py --environment development
 ```
-
-Enable deletion right after validated sync:
-
-```bash
-python app.py --environment deploy sync-drive --no-dry-run --delete-after-sync
-```
-
-Script entrypoint:
-
-```bash
-python scripts/sync_to_drive.py --environment deploy --no-dry-run
-```
-
-### Local Cleanup
-
-Dry-run cleanup:
-
-```bash
-python app.py --environment deploy cleanup-local
-```
-
-Execute cleanup:
-
-```bash
-python app.py --environment deploy cleanup-local --no-dry-run
-```
-
-Script entrypoint:
-
-```bash
-python scripts/cleanup_local.py --environment deploy --no-dry-run
-```
-
-### SQLite Backup
-
-Dry-run backup:
-
-```bash
-python app.py --environment deploy backup-sqlite
-```
-
-Create a real local snapshot:
-
-```bash
-python app.py --environment deploy backup-sqlite --no-dry-run
-```
-
-Script entrypoint:
-
-```bash
-python scripts/backup_sqlite.py --environment deploy --no-dry-run
-```
-
-### Sync Status
-
-```bash
-python app.py --environment deploy sync-status
-```
-
-This reports:
-
-- pending local files
-- already-synced files
-- invalid destination copies
-- estimated deletable bytes
-- Drive folder availability
-- latest sync report path and status
 
 ### Healthcheck
 
@@ -343,76 +254,134 @@ python app.py healthcheck --skip-broker
 python app.py --environment deploy healthcheck
 ```
 
-## Phase 3 Data Pipeline Still Present
+## Transfer Tracking
 
-Phase 4 does not remove the research pipeline introduced in phase 3. The repository still supports:
+Every pull from `PC2` leaves local traceability on `PC1`:
 
-- raw parquet loading
-- data-quality validation
-- deterministic cleaning
-- ORB, microstructure, intraday, and cost features
-- dataset preparation for later training
-
-## Logging and Reports
-
-Shared logging is handled by `monitoring/logging.py`.
-
-Phase 4 logs:
-
-- sync start and finish
-- Drive path availability
-- SQLite backup creation
-- files copied
-- files skipped
-- validation failures
-- files deleted
-- dry-run mode
-
-Structured JSON reports are written under:
+- incremental event log:
 
 ```text
-data/reports/sync/
+imports/from_pc2/transfer_log.jsonl
 ```
 
-## Important Limitation
+- per-run JSON reports:
 
-Validation only confirms the file exists in the local Google Drive folder and matches the local source by size and, optionally, checksum.
-
-It does **not** confirm that Google Drive has already uploaded the file to the cloud. That responsibility belongs to the Google Drive Desktop client.
-
-## Current Limitations
-
-Phase 4 is intentionally conservative:
-
-- no cloud API integration
-- no remote upload acknowledgment beyond local Drive-folder validation
-- no deduplicated manifest database for sync state
-- no advanced space-pressure scheduler yet
-- no object-store or remote checksum catalog
-- no final deployment supervisor service yet
-
-## What Phase 5 Should Add
-
-Phase 5 can now build on this foundation:
-
-- scheduled sync and cleanup jobs on `PC2`
-- stronger retention policies by class of data
-- Drive sync monitoring and alerting
-- artifact promotion from Drive into `PC1` research workflows
-- tighter end-to-end automation between collection, sync, feature build, and training
-
-## Tests
-
-Run the full suite with:
-
-```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests
+```text
+data/reports/lan_sync/pull_from_pc2_*.json
 ```
 
-Phase 4 specifically adds tests for:
+Each record includes:
 
-- SQLite snapshot backup creation
-- Drive sync dry-run and real copy behavior
-- validation before deletion
-- cleanup of only confirmed synced files
-- sync status reporting
+- source path
+- destination path
+- category
+- file size
+- modification timestamp
+- transfer status
+- validation result
+
+This keeps a simple but useful history of what was detected, copied, skipped, or failed.
+
+## Import Validation
+
+`validate-imports` checks:
+
+- file readability
+- required columns
+- obvious duplicate rows
+- missing timestamps
+- critical null rows
+- `bid > ask`
+- negative or absurd spreads
+- large gaps
+- rows outside regular hours
+
+Validation reports are written into `data/reports/`.
+
+## Feature Pipeline
+
+The feature pipeline generates four groups of features.
+
+### ORB features
+
+- `orb_high`
+- `orb_low`
+- `orb_range_width`
+- `orb_range_width_bps`
+- `orb_relative_price_position`
+- `breakout_distance`
+- `breakout_distance_bps`
+- `orb_range_complete`
+- `minutes_since_open`
+
+### Microstructure features
+
+- `spread`
+- `spread_bps`
+- `mid_price`
+- `micro_price`
+- `bid_ask_imbalance`
+- `rolling_spread_mean_bps`
+- `rolling_spread_std_bps`
+- `rolling_imbalance_mean`
+- `rolling_imbalance_std`
+
+### Intraday features
+
+- `return_1_bps`
+- `return_short_bps`
+- `return_medium_bps`
+- `rolling_volatility_short_bps`
+- `rolling_volatility_medium_bps`
+- `rolling_volatility_long_bps`
+- `vwap_approx`
+- `distance_to_vwap_bps`
+- `relative_volume`
+- `time_of_day_sin`
+- `time_of_day_cos`
+
+### Cost proxy features
+
+- `estimated_cost_bps`
+- `spread_proxy_bps`
+- `slippage_proxy_bps`
+
+## Windows / SMB Notes
+
+Typical setup for a Windows-based `PC2`:
+
+1. share the project folder or a data subfolder from Windows
+2. grant read access to the user that will connect from `PC1`
+3. from `PC1`, use either:
+   - the UNC path directly if the runtime supports it
+   - a mounted share path
+   - a mapped network drive available inside WSL as `/mnt/<drive>/...`
+
+Example:
+
+```dotenv
+PC2_NETWORK_ROOT=/mnt/z/microalpha
+```
+
+where `Z:` is a mapped drive pointing to:
+
+```text
+\\PC2\microalpha
+```
+
+## Limitations
+
+- the application assumes the network share is already reachable
+- it does not mount SMB shares or manage credentials
+- transfer change detection is based on path, size, and modified time, not content hashing
+- import validation is basic but practical; it is not a full market data QA framework
+- feature generation is offline research preparation, not online inference
+
+## Next Phase
+
+The next logical phase is:
+
+- labels and dataset generation from `data/features/`
+- temporal training / validation splits
+- baseline model training and evaluation
+- later, alignment between offline features and online inference
