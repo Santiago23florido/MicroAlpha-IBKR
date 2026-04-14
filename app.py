@@ -17,6 +17,7 @@ from broker.ib_client import IBClientError
 from config import Settings, load_settings
 from engine.runtime import RuntimeServices, build_runtime
 from ingestion.collector import collect_market_data
+from ingestion.ibkr_client import build_collector_ib_client
 from models.train_baseline import train_baseline_model
 from models.train_deep import train_deep_model
 from monitoring.healthcheck import build_healthcheck_report
@@ -26,8 +27,8 @@ from monitoring.sync import sync_data_artifacts
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "MicroAlpha-IBKR phase 1 foundation. "
-            "Use development mode on PC1 for research/backtesting/training and deploy mode on PC2 for collection and operations."
+            "MicroAlpha-IBKR phase 2 collector foundation. "
+            "Use development mode on PC1 for research/backtesting/training and deploy mode on PC2 for operational collection."
         )
     )
     parser.add_argument("--env-file", default=".env", help="Path to the environment file.")
@@ -39,10 +40,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    collect_parser = subparsers.add_parser("collect", help="Run one safe collection cycle and persist raw artifacts.")
+    collect_parser = subparsers.add_parser(
+        "collect",
+        help="Run the PC2 market data collector with polling, buffering and parquet persistence.",
+    )
     collect_parser.add_argument("--symbol", help="Override the configured symbol.")
-    collect_parser.add_argument("--duration", default="1 D", help="Historical duration passed to IBKR.")
-    collect_parser.add_argument("--bar-size", default="1 min", help="Historical bar size passed to IBKR.")
+    collect_parser.add_argument("--symbols", nargs="+", help="Override the configured symbol universe.")
+    collect_parser.add_argument("--once", action="store_true", help="Run one polling cycle and exit.")
+    collect_parser.add_argument("--max-cycles", type=int, help="Stop after this many polling cycles.")
+    collect_parser.add_argument("--max-runtime-seconds", type=float, help="Stop after this many seconds.")
+    collect_parser.add_argument("--poll-interval", type=float, help="Override the polling interval in seconds.")
+    collect_parser.add_argument("--flush-interval", type=float, help="Override the parquet flush interval in seconds.")
+    collect_parser.add_argument("--batch-size", type=int, help="Override the in-memory batch size.")
     collect_parser.add_argument("--output-root", help="Optional raw-data destination override.")
 
     train_parser = subparsers.add_parser("train", help="Train the baseline or deep model from a local dataset.")
@@ -140,24 +149,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "collect":
+            print_result(
+                collect_market_data(
+                    settings,
+                    symbols=args.symbols,
+                    symbol=args.symbol,
+                    once=args.once,
+                    max_cycles=args.max_cycles,
+                    max_runtime_seconds=args.max_runtime_seconds,
+                    output_root=args.output_root,
+                    poll_interval_seconds=args.poll_interval,
+                    flush_interval_seconds=args.flush_interval,
+                    batch_size=args.batch_size,
+                )
+            )
+            return 0
+
         runtime = build_runtime(
             env_file=args.env_file,
             config_dir=args.config_dir,
             environment=args.environment,
         )
-
-        if args.command == "collect":
-            print_result(
-                collect_market_data(
-                    runtime.settings,
-                    runtime.client,
-                    symbol=args.symbol,
-                    duration=args.duration,
-                    bar_size=args.bar_size,
-                    output_root=args.output_root,
-                )
-            )
-            return 0
 
         if args.command == "train":
             return handle_train(runtime, args)
@@ -218,12 +231,11 @@ def handle_healthcheck(args: argparse.Namespace, settings: Settings) -> int:
         print_result(build_healthcheck_report(settings))
         return 0
 
-    runtime = build_runtime(
-        env_file=args.env_file,
-        config_dir=args.config_dir,
-        environment=args.environment,
-    )
-    print_result(build_healthcheck_report(runtime.settings, broker_client=runtime.client))
+    from monitoring.logging import setup_logger
+
+    logger = setup_logger(settings.log_level, settings.log_file, logger_name="microalpha.healthcheck")
+    collector_client = build_collector_ib_client(settings, logger)
+    print_result(build_healthcheck_report(settings, broker_client=collector_client))
     return 0
 
 

@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from broker.ib_client import IBClient, IBRequestTimeout
+from broker.ib_client import IBClient, IBClientError, IBRequestTimeout
 
 
 class FakeIBApp:
@@ -122,6 +122,11 @@ class HangingIBApp(FakeIBApp):
         self.connected = False
 
 
+class ExplodingConnectIBApp(FakeIBApp):
+    def connect(self, host: str, port: int, client_id: int) -> None:
+        raise AttributeError("socket bootstrap failed")
+
+
 def build_client(app_factory):
     logger = logging.getLogger("test-ib-client")
     return IBClient(
@@ -161,6 +166,15 @@ def test_connect_timeout_is_actionable() -> None:
         client.connect()
 
     assert "127.0.0.1:4002" in str(exc_info.value)
+
+
+def test_connect_bootstrap_failure_is_wrapped_cleanly() -> None:
+    client = build_client(ExplodingConnectIBApp)
+
+    with pytest.raises(IBClientError) as exc_info:
+        client.connect()
+
+    assert "bootstrap failed before the handshake" in str(exc_info.value)
 
 
 def test_market_snapshot_falls_back_to_recent_bar_when_ticks_are_missing() -> None:

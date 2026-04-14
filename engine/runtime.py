@@ -88,6 +88,7 @@ def ensure_runtime_directories(settings: Settings) -> None:
     directories = [
         settings.paths.data_root,
         settings.paths.raw_dir,
+        settings.paths.market_raw_dir,
         settings.paths.processed_dir,
         settings.paths.feature_dir,
         settings.paths.model_dir,

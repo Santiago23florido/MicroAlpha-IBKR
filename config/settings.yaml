@@ -11,6 +11,7 @@ defaults:
   ib_port: 4002
   ib_client_id: 1
   ib_ui_client_id: 101
+  ib_collector_client_id: 201
   ib_exchange: SMART
   ib_currency: USD
   ib_account_summary_group: All
@@ -19,6 +20,7 @@ defaults:
   timezone: America/New_York
   paths:
     raw_dir: data/raw
+    market_raw_dir: data/raw/market
     processed_dir: data/processed
     feature_dir: data/features
     model_dir: data/models
@@ -60,6 +62,14 @@ defaults:
     host: 127.0.0.1
     port: 8501
     title: MicroAlpha IBKR
+  collector:
+    mode: snapshot_polling
+    poll_interval_seconds: 5.0
+    flush_interval_seconds: 30.0
+    batch_size: 50
+    reconnect_delay_seconds: 10.0
+    max_reconnect_attempts: 5
+    health_log_interval_seconds: 60.0
 
 environments:
   development:
@@ -68,6 +78,10 @@ environments:
     backtest_enabled: true
     safe_to_trade: false
     broker_mode: paper
+    collector:
+      poll_interval_seconds: 10.0
+      flush_interval_seconds: 30.0
+      batch_size: 20
   deploy:
     collector_enabled: true
     training_enabled: false
@@ -75,3 +89,7 @@ environments:
     safe_to_trade: false
     broker_mode: paper
     log_level: INFO
+    collector:
+      poll_interval_seconds: 5.0
+      flush_interval_seconds: 20.0
+      batch_size: 50

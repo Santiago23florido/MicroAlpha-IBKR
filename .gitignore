@@ -13,6 +13,9 @@ logs/
 *.log
 data/raw/*
 !data/raw/.gitkeep
+!data/raw/market/
+data/raw/market/*
+!data/raw/market/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
 !data/processed/runtime/

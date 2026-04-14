@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 1 healthcheck entrypoint for config, paths, and broker connectivity."""
+"""Phase 2 healthcheck entrypoint for config, collector readiness, and broker connectivity."""
 
 from __future__ import annotations
 
