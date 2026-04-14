@@ -4,14 +4,14 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 
-def _parse_bool(name: str, default: bool) -> bool:
-    raw_value = os.getenv(name)
+def _parse_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
+    raw_value = env.get(name)
     if raw_value is None:
         return default
 
@@ -26,8 +26,8 @@ def _parse_bool(name: str, default: bool) -> bool:
     )
 
 
-def _parse_int(name: str, default: int) -> int:
-    raw_value = os.getenv(name)
+def _parse_int(env: Mapping[str, str], name: str, default: int) -> int:
+    raw_value = env.get(name)
     if raw_value is None:
         return default
     try:
@@ -36,8 +36,8 @@ def _parse_int(name: str, default: int) -> int:
         raise ValueError(f"Invalid integer value for {name!r}: {raw_value!r}.") from exc
 
 
-def _parse_float(name: str, default: float) -> float:
-    raw_value = os.getenv(name)
+def _parse_float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw_value = env.get(name)
     if raw_value is None:
         return default
     try:
@@ -46,8 +46,8 @@ def _parse_float(name: str, default: float) -> float:
         raise ValueError(f"Invalid float value for {name!r}: {raw_value!r}.") from exc
 
 
-def _parse_time(name: str, default: str) -> time:
-    raw_value = os.getenv(name, default).strip()
+def _parse_time(env: Mapping[str, str], name: str, default: str) -> time:
+    raw_value = str(env.get(name, default)).strip()
     return _coerce_time(raw_value, name)
 
 
@@ -61,8 +61,8 @@ def _coerce_time(value: str, label: str) -> time:
         ) from exc
 
 
-def _parse_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    raw_value = os.getenv(name)
+def _parse_csv(env: Mapping[str, str], name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw_value = env.get(name)
     if raw_value is None:
         return default
     return _normalize_symbols(raw_value.split(","))
@@ -193,6 +193,21 @@ class CollectorSettings:
 
 
 @dataclass(frozen=True)
+class FeaturePipelineSettings:
+    gap_threshold_seconds: int = 120
+    max_abs_spread_bps: float = 250.0
+    forward_fill_limit: int = 2
+    drop_outside_regular_hours: bool = True
+    rolling_short_window: int = 5
+    rolling_medium_window: int = 15
+    rolling_long_window: int = 30
+    vwap_window: int = 30
+    volume_window: int = 30
+    label_horizon_rows: int = 1
+    train_split_ratio: float = 0.8
+
+
+@dataclass(frozen=True)
 class PathSettings:
     project_root: str = "."
     config_dir: str = "config"
@@ -230,6 +245,7 @@ class Settings:
     storage: StorageSettings
     ui: UISettings
     collector: CollectorSettings = field(default_factory=CollectorSettings)
+    feature_pipeline: FeaturePipelineSettings = field(default_factory=FeaturePipelineSettings)
     paths: PathSettings = field(default_factory=PathSettings)
     deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
 
@@ -353,10 +369,15 @@ def load_settings(
     else:
         resolved_env_file = env_file or ".env"
     env_path = Path(resolved_env_file)
-    load_dotenv(env_path if env_path.exists() else None)
+    file_env = {
+        key: str(value)
+        for key, value in dotenv_values(env_path if env_path.exists() else None).items()
+        if value is not None
+    }
+    runtime_env = {**file_env, **os.environ}
 
     resolved_config_dir = Path(
-        config_dir or os.getenv("MICROALPHA_CONFIG_DIR") or Path(__file__).resolve().parent
+        config_dir or runtime_env.get("MICROALPHA_CONFIG_DIR") or Path(__file__).resolve().parent
     ).resolve()
     project_root = resolved_config_dir.parent
 
@@ -369,8 +390,8 @@ def load_settings(
     default_environment = str(default_settings.get("environment", "development"))
     resolved_environment = (
         environment
-        or os.getenv("APP_ENV")
-        or os.getenv("MICROALPHA_ENV")
+        or runtime_env.get("APP_ENV")
+        or runtime_env.get("MICROALPHA_ENV")
         or default_environment
     )
 
@@ -387,51 +408,60 @@ def load_settings(
         deployment_payload.get("environments", {}).get(resolved_environment, {}),
     )
 
-    timezone_value = os.getenv(
-        "TIMEZONE",
-        os.getenv("MARKET_TIMEZONE", str(merged_settings.get("timezone", "America/New_York"))),
+    timezone_value = runtime_env.get("TIMEZONE") or runtime_env.get(
+        "MARKET_TIMEZONE",
+        str(merged_settings.get("timezone", "America/New_York")),
     )
 
-    default_symbol = os.getenv(
+    default_symbol = runtime_env.get(
         "IB_SYMBOL",
         str(symbols_payload.get("default_symbol", merged_settings.get("default_symbol", "SPY"))),
     ).upper()
     supported_symbols = _parse_csv(
+        runtime_env,
         "SUPPORTED_SYMBOLS",
         _normalize_symbols(
             tuple(symbols_payload.get("supported_symbols", (default_symbol,)))
         ),
     )
 
-    data_root_raw = os.getenv("DATA_ROOT", str(merged_settings.get("data_root", "data")))
+    default_data_root = str(merged_settings.get("data_root", "data"))
+    data_root_raw = runtime_env.get("DATA_ROOT", default_data_root)
     path_overrides = merged_settings.get("paths", {})
-    raw_dir_raw = str(path_overrides.get("raw_dir", Path(data_root_raw) / "raw"))
-    market_raw_dir_raw = os.getenv(
-        "MARKET_RAW_DIR",
-        str(path_overrides.get("market_raw_dir", Path(raw_dir_raw) / "market")),
-    )
-    processed_dir_raw = str(path_overrides.get("processed_dir", Path(data_root_raw) / "processed"))
-    feature_dir_raw = str(path_overrides.get("feature_dir", Path(data_root_raw) / "features"))
-    model_dir_raw = str(path_overrides.get("model_dir", Path(data_root_raw) / "models"))
-    model_artifacts_dir_raw = os.getenv(
-        "MODEL_ARTIFACTS_DIR",
-        str(path_overrides.get("model_artifacts_dir", Path(model_dir_raw) / "artifacts")),
-    )
-    log_dir_raw = str(path_overrides.get("log_dir", Path(data_root_raw) / "logs"))
-    report_dir_raw = str(path_overrides.get("report_dir", Path(data_root_raw) / "reports"))
-    log_file_raw = os.getenv("LOG_FILE", str(path_overrides.get("log_file", Path(log_dir_raw) / "microalpha.log")))
-    execution_log_raw = os.getenv(
-        "EXECUTION_LOG_FILE",
-        str(path_overrides.get("execution_log_file", Path(report_dir_raw) / "executions.csv")),
-    )
-    runtime_db_raw = os.getenv(
-        "RUNTIME_DB_PATH",
-        str(path_overrides.get("runtime_db_path", Path(processed_dir_raw) / "runtime" / "microalpha.db")),
-    )
-    registry_path_raw = os.getenv(
-        "MODEL_REGISTRY_PATH",
-        str(path_overrides.get("model_registry_path", Path(model_artifacts_dir_raw) / "registry.json")),
-    )
+    data_root_is_overridden = data_root_raw != default_data_root
+
+    def _path_value(
+        env_name: str | None,
+        key: str,
+        relative_default: str,
+        *,
+        explicit_default: str | None = None,
+    ) -> str:
+        if env_name:
+            env_value = runtime_env.get(env_name)
+            if env_value is not None:
+                return env_value
+
+        configured = path_overrides.get(key)
+        default_value = explicit_default or str(Path(default_data_root) / relative_default)
+        if configured is None:
+            return str(Path(data_root_raw) / relative_default)
+        if data_root_is_overridden and str(configured) == default_value:
+            return str(Path(data_root_raw) / relative_default)
+        return str(configured)
+
+    raw_dir_raw = _path_value(None, "raw_dir", "raw")
+    market_raw_dir_raw = _path_value("MARKET_RAW_DIR", "market_raw_dir", "raw/market")
+    processed_dir_raw = _path_value(None, "processed_dir", "processed")
+    feature_dir_raw = _path_value(None, "feature_dir", "features")
+    model_dir_raw = _path_value(None, "model_dir", "models")
+    model_artifacts_dir_raw = _path_value("MODEL_ARTIFACTS_DIR", "model_artifacts_dir", "models/artifacts")
+    log_dir_raw = _path_value(None, "log_dir", "logs")
+    report_dir_raw = _path_value(None, "report_dir", "reports")
+    log_file_raw = _path_value("LOG_FILE", "log_file", "logs/microalpha.log")
+    execution_log_raw = _path_value("EXECUTION_LOG_FILE", "execution_log_file", "reports/executions.csv")
+    runtime_db_raw = _path_value("RUNTIME_DB_PATH", "runtime_db_path", "processed/runtime/microalpha.db")
+    registry_path_raw = _path_value("MODEL_REGISTRY_PATH", "model_registry_path", "models/artifacts/registry.json")
 
     paths = PathSettings(
         project_root=str(project_root),
@@ -451,24 +481,29 @@ def load_settings(
         environment=resolved_environment,
         machine_role=str(merged_deployment.get("machine_role", "pc1" if resolved_environment == "development" else "pc2")),
         role=str(merged_deployment.get("role", "research" if resolved_environment == "development" else "deploy")),
-        broker_mode=os.getenv("BROKER_MODE", str(merged_settings.get("broker_mode", "paper"))),
+        broker_mode=runtime_env.get("BROKER_MODE", str(merged_settings.get("broker_mode", "paper"))),
         collector_enabled=_parse_bool(
+            runtime_env,
             "COLLECTOR_ENABLED",
             bool(merged_settings.get("collector_enabled", resolved_environment == "deploy")),
         ),
         training_enabled=_parse_bool(
+            runtime_env,
             "TRAINING_ENABLED",
             bool(merged_settings.get("training_enabled", resolved_environment == "development")),
         ),
         backtest_enabled=_parse_bool(
+            runtime_env,
             "BACKTEST_ENABLED",
             bool(merged_settings.get("backtest_enabled", resolved_environment == "development")),
         ),
         scheduler_enabled=_parse_bool(
+            runtime_env,
             "SCHEDULER_ENABLED",
             bool(merged_deployment.get("scheduler_enabled", resolved_environment == "deploy")),
         ),
         sync_enabled=_parse_bool(
+            runtime_env,
             "SYNC_ENABLED",
             bool(merged_deployment.get("sync_enabled", resolved_environment == "deploy")),
         ),
@@ -479,30 +514,34 @@ def load_settings(
     model_defaults = merged_settings.get("models", {})
     ui_defaults = merged_settings.get("ui", {})
     collector_defaults = merged_settings.get("collector", {})
+    feature_pipeline_defaults = merged_settings.get("feature_pipeline", {})
 
     return Settings(
         broker=BrokerSettings(
-            ib_host=os.getenv("IB_HOST", str(merged_settings.get("ib_host", "127.0.0.1"))),
-            ib_port=_parse_int("IB_PORT", int(merged_settings.get("ib_port", 4002))),
-            ib_client_id=_parse_int("IB_CLIENT_ID", int(merged_settings.get("ib_client_id", 1))),
-            ib_ui_client_id=_parse_int("IB_UI_CLIENT_ID", int(merged_settings.get("ib_ui_client_id", 101))),
+            ib_host=runtime_env.get("IB_HOST", str(merged_settings.get("ib_host", "127.0.0.1"))),
+            ib_port=_parse_int(runtime_env, "IB_PORT", int(merged_settings.get("ib_port", 4002))),
+            ib_client_id=_parse_int(runtime_env, "IB_CLIENT_ID", int(merged_settings.get("ib_client_id", 1))),
+            ib_ui_client_id=_parse_int(runtime_env, "IB_UI_CLIENT_ID", int(merged_settings.get("ib_ui_client_id", 101))),
             ib_collector_client_id=_parse_int(
+                runtime_env,
                 "IB_COLLECTOR_CLIENT_ID",
                 int(merged_settings.get("ib_collector_client_id", 201)),
             ),
             ib_symbol=default_symbol,
-            ib_exchange=os.getenv("IB_EXCHANGE", str(merged_settings.get("ib_exchange", "SMART"))).upper(),
-            ib_currency=os.getenv("IB_CURRENCY", str(merged_settings.get("ib_currency", "USD"))).upper(),
+            ib_exchange=runtime_env.get("IB_EXCHANGE", str(merged_settings.get("ib_exchange", "SMART"))).upper(),
+            ib_currency=runtime_env.get("IB_CURRENCY", str(merged_settings.get("ib_currency", "USD"))).upper(),
             supported_symbols=supported_symbols,
-            account_summary_group=os.getenv(
+            account_summary_group=runtime_env.get(
                 "IB_ACCOUNT_SUMMARY_GROUP",
                 str(merged_settings.get("ib_account_summary_group", "All")),
             ),
             request_timeout_seconds=_parse_float(
+                runtime_env,
                 "IB_REQUEST_TIMEOUT_SECONDS",
                 float(merged_settings.get("ib_request_timeout_seconds", 15.0)),
             ),
             order_follow_up_seconds=_parse_float(
+                runtime_env,
                 "IB_ORDER_FOLLOW_UP_SECONDS",
                 float(merged_settings.get("ib_order_follow_up_seconds", 5.0)),
             ),
@@ -510,25 +549,30 @@ def load_settings(
         ),
         session=SessionSettings(
             timezone=timezone_value,
-            orb_start=_parse_time("ORB_START", str(session_defaults.get("orb_start", "09:30"))),
-            orb_end=_parse_time("ORB_END", str(session_defaults.get("orb_end", "09:45"))),
+            orb_start=_parse_time(runtime_env, "ORB_START", str(session_defaults.get("orb_start", "09:30"))),
+            orb_end=_parse_time(runtime_env, "ORB_END", str(session_defaults.get("orb_end", "09:45"))),
             primary_session_end=_parse_time(
+                runtime_env,
                 "PRIMARY_SESSION_END",
                 str(session_defaults.get("primary_session_end", "11:30")),
             ),
             secondary_session_start=_parse_time(
+                runtime_env,
                 "SECONDARY_SESSION_START",
                 str(session_defaults.get("secondary_session_start", "13:30")),
             ),
             secondary_session_end=_parse_time(
+                runtime_env,
                 "SECONDARY_SESSION_END",
                 str(session_defaults.get("secondary_session_end", "15:00")),
             ),
             enable_secondary_session=_parse_bool(
+                runtime_env,
                 "ENABLE_SECONDARY_SESSION",
                 bool(session_defaults.get("enable_secondary_session", False)),
             ),
             flatten_before_close_minutes=_parse_int(
+                runtime_env,
                 "FLATTEN_BEFORE_CLOSE_MINUTES",
                 int(session_defaults.get("flatten_before_close_minutes", 5)),
             ),
@@ -537,113 +581,191 @@ def load_settings(
         ),
         trading=TradingSettings(
             default_order_quantity=_parse_int(
+                runtime_env,
                 "DEFAULT_ORDER_QUANTITY",
                 int(trading_defaults.get("default_order_quantity", 1)),
             ),
-            dry_run=_parse_bool("DRY_RUN", bool(trading_defaults.get("dry_run", True))),
+            dry_run=_parse_bool(runtime_env, "DRY_RUN", bool(trading_defaults.get("dry_run", True))),
             safe_to_trade=_parse_bool(
+                runtime_env,
                 "SAFE_TO_TRADE",
                 bool(trading_defaults.get("safe_to_trade", merged_settings.get("safe_to_trade", False))),
             ),
-            allow_shorts=_parse_bool("ALLOW_SHORTS", bool(trading_defaults.get("allow_shorts", False))),
-            data_mode=os.getenv("DATA_MODE", str(trading_defaults.get("data_mode", "paper_or_local"))),
+            allow_shorts=_parse_bool(runtime_env, "ALLOW_SHORTS", bool(trading_defaults.get("allow_shorts", False))),
+            data_mode=runtime_env.get("DATA_MODE", str(trading_defaults.get("data_mode", "paper_or_local"))),
             allow_session_execution=_parse_bool(
+                runtime_env,
                 "ALLOW_SESSION_EXECUTION",
                 bool(trading_defaults.get("allow_session_execution", False)),
             ),
             entry_limit_buffer_bps=_parse_float(
+                runtime_env,
                 "ENTRY_LIMIT_BUFFER_BPS",
                 float(trading_defaults.get("entry_limit_buffer_bps", 2.0)),
             ),
             cost_buffer_bps=_parse_float(
+                runtime_env,
                 "COST_BUFFER_BPS",
                 float(trading_defaults.get("cost_buffer_bps", 2.5)),
             ),
             max_spread_bps=_parse_float(
+                runtime_env,
                 "MAX_SPREAD_BPS",
                 float(trading_defaults.get("max_spread_bps", 8.0)),
             ),
             max_hold_minutes=_parse_int(
+                runtime_env,
                 "MAX_HOLD_MINUTES",
                 int(trading_defaults.get("max_hold_minutes", 30)),
             ),
         ),
         risk=RiskSettings(
             max_trades_per_day=_parse_int(
+                runtime_env,
                 "MAX_TRADES_PER_DAY",
                 int(merged_risk.get("max_trades_per_day", 2)),
             ),
             max_daily_loss_pct=_parse_float(
+                runtime_env,
                 "MAX_DAILY_LOSS_PCT",
                 float(merged_risk.get("max_daily_loss_pct", 1.0)),
             ),
             max_open_positions=_parse_int(
+                runtime_env,
                 "MAX_OPEN_POSITIONS",
                 int(merged_risk.get("max_open_positions", 1)),
             ),
         ),
         models=ModelSettings(
             model_prob_threshold=_parse_float(
+                runtime_env,
                 "MODEL_PROB_THRESHOLD",
                 float(model_defaults.get("model_prob_threshold", 0.58)),
             ),
             target_horizon_minutes=_parse_int(
+                runtime_env,
                 "TARGET_HORIZON_MINUTES",
                 int(model_defaults.get("target_horizon_minutes", 3)),
             ),
-            active_baseline_model=os.getenv("ACTIVE_BASELINE_MODEL") or model_defaults.get("active_baseline_model") or None,
-            active_deep_model=os.getenv("ACTIVE_DEEP_MODEL") or model_defaults.get("active_deep_model") or None,
+            active_baseline_model=runtime_env.get("ACTIVE_BASELINE_MODEL") or model_defaults.get("active_baseline_model") or None,
+            active_deep_model=runtime_env.get("ACTIVE_DEEP_MODEL") or model_defaults.get("active_deep_model") or None,
             baseline_weight=_parse_float(
+                runtime_env,
                 "BASELINE_WEIGHT",
                 float(model_defaults.get("baseline_weight", 0.4)),
             ),
             deep_weight=_parse_float(
+                runtime_env,
                 "DEEP_WEIGHT",
                 float(model_defaults.get("deep_weight", 0.6)),
             ),
             artifacts_dir=_resolve_path(project_root, model_artifacts_dir_raw),
             registry_path=_resolve_path(project_root, registry_path_raw),
             sequence_length=_parse_int(
+                runtime_env,
                 "MODEL_SEQUENCE_LENGTH",
                 int(model_defaults.get("sequence_length", 16)),
             ),
         ),
         storage=StorageSettings(
-            log_level=os.getenv("LOG_LEVEL", str(merged_settings.get("log_level", "INFO"))).upper(),
+            log_level=runtime_env.get("LOG_LEVEL", str(merged_settings.get("log_level", "INFO"))).upper(),
             log_file=_resolve_path(project_root, log_file_raw),
             execution_log_file=_resolve_path(project_root, execution_log_raw),
             runtime_db_path=_resolve_path(project_root, runtime_db_raw),
         ),
         ui=UISettings(
-            host=os.getenv("UI_HOST", str(ui_defaults.get("host", "127.0.0.1"))),
-            port=_parse_int("UI_PORT", int(ui_defaults.get("port", 8501))),
-            title=os.getenv("UI_TITLE", str(ui_defaults.get("title", "MicroAlpha IBKR"))),
+            host=runtime_env.get("UI_HOST", str(ui_defaults.get("host", "127.0.0.1"))),
+            port=_parse_int(runtime_env, "UI_PORT", int(ui_defaults.get("port", 8501))),
+            title=runtime_env.get("UI_TITLE", str(ui_defaults.get("title", "MicroAlpha IBKR"))),
         ),
         collector=CollectorSettings(
-            mode=os.getenv("COLLECTOR_MODE", str(collector_defaults.get("mode", "snapshot_polling"))),
+            mode=runtime_env.get("COLLECTOR_MODE", str(collector_defaults.get("mode", "snapshot_polling"))),
             poll_interval_seconds=_parse_float(
+                runtime_env,
                 "COLLECTOR_POLL_INTERVAL_SECONDS",
                 float(collector_defaults.get("poll_interval_seconds", 5.0)),
             ),
             flush_interval_seconds=_parse_float(
+                runtime_env,
                 "COLLECTOR_FLUSH_INTERVAL_SECONDS",
                 float(collector_defaults.get("flush_interval_seconds", 30.0)),
             ),
             batch_size=_parse_int(
+                runtime_env,
                 "COLLECTOR_BATCH_SIZE",
                 int(collector_defaults.get("batch_size", 50)),
             ),
             reconnect_delay_seconds=_parse_float(
+                runtime_env,
                 "COLLECTOR_RECONNECT_DELAY_SECONDS",
                 float(collector_defaults.get("reconnect_delay_seconds", 10.0)),
             ),
             max_reconnect_attempts=_parse_int(
+                runtime_env,
                 "COLLECTOR_MAX_RECONNECT_ATTEMPTS",
                 int(collector_defaults.get("max_reconnect_attempts", 5)),
             ),
             health_log_interval_seconds=_parse_float(
+                runtime_env,
                 "COLLECTOR_HEALTH_LOG_INTERVAL_SECONDS",
                 float(collector_defaults.get("health_log_interval_seconds", 60.0)),
+            ),
+        ),
+        feature_pipeline=FeaturePipelineSettings(
+            gap_threshold_seconds=_parse_int(
+                runtime_env,
+                "FEATURE_GAP_THRESHOLD_SECONDS",
+                int(feature_pipeline_defaults.get("gap_threshold_seconds", 120)),
+            ),
+            max_abs_spread_bps=_parse_float(
+                runtime_env,
+                "FEATURE_MAX_ABS_SPREAD_BPS",
+                float(feature_pipeline_defaults.get("max_abs_spread_bps", 250.0)),
+            ),
+            forward_fill_limit=_parse_int(
+                runtime_env,
+                "FEATURE_FORWARD_FILL_LIMIT",
+                int(feature_pipeline_defaults.get("forward_fill_limit", 2)),
+            ),
+            drop_outside_regular_hours=_parse_bool(
+                runtime_env,
+                "FEATURE_DROP_OUTSIDE_REGULAR_HOURS",
+                bool(feature_pipeline_defaults.get("drop_outside_regular_hours", True)),
+            ),
+            rolling_short_window=_parse_int(
+                runtime_env,
+                "FEATURE_ROLLING_SHORT_WINDOW",
+                int(feature_pipeline_defaults.get("rolling_short_window", 5)),
+            ),
+            rolling_medium_window=_parse_int(
+                runtime_env,
+                "FEATURE_ROLLING_MEDIUM_WINDOW",
+                int(feature_pipeline_defaults.get("rolling_medium_window", 15)),
+            ),
+            rolling_long_window=_parse_int(
+                runtime_env,
+                "FEATURE_ROLLING_LONG_WINDOW",
+                int(feature_pipeline_defaults.get("rolling_long_window", 30)),
+            ),
+            vwap_window=_parse_int(
+                runtime_env,
+                "FEATURE_VWAP_WINDOW",
+                int(feature_pipeline_defaults.get("vwap_window", 30)),
+            ),
+            volume_window=_parse_int(
+                runtime_env,
+                "FEATURE_VOLUME_WINDOW",
+                int(feature_pipeline_defaults.get("volume_window", 30)),
+            ),
+            label_horizon_rows=_parse_int(
+                runtime_env,
+                "FEATURE_LABEL_HORIZON_ROWS",
+                int(feature_pipeline_defaults.get("label_horizon_rows", 1)),
+            ),
+            train_split_ratio=_parse_float(
+                runtime_env,
+                "FEATURE_TRAIN_SPLIT_RATIO",
+                float(feature_pipeline_defaults.get("train_split_ratio", 0.8)),
             ),
         ),
         paths=paths,

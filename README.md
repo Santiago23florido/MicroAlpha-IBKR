@@ -1,67 +1,40 @@
-# MicroAlpha-IBKR Phase 2 Collector Foundation
+# MicroAlpha-IBKR Phase 3 Data Pipeline
 
-## Purpose of Phase 2
+## Purpose
 
-Phase 1 left the repository organized for a two-machine setup:
+The repository is organized around a two-machine workflow:
 
-- `PC1`: development, research, training, backtesting, validation
-- `PC2`: deployment, market data collection, operational monitoring, later inference
+- `PC1`: research, data validation, feature engineering, model training, backtesting
+- `PC2`: IBKR connectivity, market data collection, operational monitoring
 
-Phase 2 implements the first operational component for `PC2`: a robust market data collector for IBKR.
+Phase 1 established the repository structure and configuration model.
+Phase 2 added the first operational collector on `PC2`.
+Phase 3 adds the `PC1` data pipeline that turns collected raw market data into validated, cleaned, feature-rich parquet datasets for later model work.
 
-This phase does **not** implement autonomous trading, strategy execution, final paper trading, advanced backtesting, news, RL, or online inference. It focuses on a clean and extensible data collection node.
+This phase does **not** implement autonomous trading, final models, order execution, RL, LLM/news, or advanced optimization.
 
-## What Is New in Phase 2
+## Phase 3 Scope
 
-The repository now includes:
+Phase 3 adds:
 
-- a dedicated collector client layer in [ingestion/ibkr_client.py](/home/santiago/ibkr_invest/ingestion/ibkr_client.py)
-- normalized market data records in [ingestion/market_data.py](/home/santiago/ibkr_invest/ingestion/market_data.py)
-- parquet persistence with batching in [ingestion/persistence.py](/home/santiago/ibkr_invest/ingestion/persistence.py)
-- a reconnecting polling collector loop in [ingestion/collector.py](/home/santiago/ibkr_invest/ingestion/collector.py)
-- stronger collector health reporting in [monitoring/healthcheck.py](/home/santiago/ibkr_invest/monitoring/healthcheck.py)
-- collector-specific config values in [config/settings.yaml](/home/santiago/ibkr_invest/config/settings.yaml)
+- structured loading of raw market parquet partitions
+- data-quality validation and issue reporting
+- deterministic cleaning and normalization
+- ORB, microstructure, intraday, and cost features
+- parquet persistence for processed features
+- a dataset builder for future training workflows
+- a CLI entrypoint for end-to-end feature generation
 
-## Architecture
+## PC2 -> PC1 Flow
 
-### PC1
+Current intended workflow:
 
-Use `development` mode for:
-
-- training
-- backtesting
-- session validation
-- dashboard inspection
-
-### PC2
-
-Use `deploy` mode for:
-
-- IBKR connectivity
-- continuous or bounded market data polling
-- parquet persistence under `data/raw/market`
-- operational health checks
-
-## Collector Design
-
-The collector intentionally uses polling, not a second low-level streaming stack. That choice is deliberate:
-
-- the repo already had a working IBKR client for snapshots and historical fallback
-- polling is simpler to deploy and observe on PC2
-- it avoids introducing a parallel IBKR implementation before phase 3
-
-Current flow:
-
-1. load config from `.env` + `config/*.yaml`
-2. build collector logger
-3. validate output path
-4. connect to IBKR using a dedicated collector `clientId`
-5. poll snapshots for configured symbols
-6. normalize records to one schema
-7. buffer in memory
-8. flush parquet batches by date and symbol
-9. log health, errors and reconnect attempts
-10. flush and disconnect cleanly on exit
+1. `PC2` runs the collector and stores raw parquet under `data/raw/market/`
+2. raw partitions are synced from `PC2` to `PC1`
+3. `PC1` runs `python app.py build-features`
+4. the pipeline validates, cleans, and engineers features
+5. processed parquet is written under `data/features/`
+6. later phases will build labels, training jobs, and inference on top of that output
 
 ## Project Structure
 
@@ -69,7 +42,13 @@ Current flow:
 MicroAlpha-IBKR/
 ├── app.py
 ├── config/
+│   ├── settings.yaml
+│   ├── risk.yaml
+│   ├── symbols.yaml
+│   └── deployment.yaml
 ├── data/
+│   ├── loader.py
+│   ├── cleaning.py
 │   ├── raw/
 │   │   └── market/
 │   ├── processed/
@@ -82,91 +61,80 @@ MicroAlpha-IBKR/
 │   ├── market_data.py
 │   ├── persistence.py
 │   └── collector.py
+├── features/
+│   ├── orb_features.py
+│   ├── microstructure_features.py
+│   ├── preprocessing.py
+│   └── feature_pipeline.py
+├── labels/
+│   ├── generator.py
+│   └── dataset_builder.py
 ├── monitoring/
 │   ├── logging.py
 │   ├── healthcheck.py
-│   └── sync.py
+│   └── data_quality.py
 ├── scripts/
 │   ├── run_collector.py
-│   ├── healthcheck.py
-│   ├── run_session.py
+│   ├── build_features.py
 │   ├── train_model.py
+│   ├── run_session.py
+│   ├── healthcheck.py
 │   └── sync_data.py
 └── tests/
 ```
 
-Existing working modules from earlier phases are still present:
+Existing modules from earlier phases remain in place:
 
 - `broker/`
 - `engine/`
-- `strategy/`
-- `risk/`
 - `models/`
-- `ui/`
+- `risk/`
+- `strategy/`
 - `storage/`
+- `ui/`
 
 ## Configuration
 
 Configuration is merged from:
 
 - `.env`
-- [config/settings.yaml](/home/santiago/ibkr_invest/config/settings.yaml)
-- [config/risk.yaml](/home/santiago/ibkr_invest/config/risk.yaml)
-- [config/symbols.yaml](/home/santiago/ibkr_invest/config/symbols.yaml)
-- [config/deployment.yaml](/home/santiago/ibkr_invest/config/deployment.yaml)
+- `config/settings.yaml`
+- `config/risk.yaml`
+- `config/symbols.yaml`
+- `config/deployment.yaml`
 
-### Environment modes
+Environment modes:
 
-- `development`
-- `deploy`
+- `development` for `PC1`
+- `deploy` for `PC2`
 
-### Collector-specific settings
+### Relevant Phase 3 Settings
 
-- `IB_COLLECTOR_CLIENT_ID`
-- `COLLECTOR_MODE`
-- `COLLECTOR_POLL_INTERVAL_SECONDS`
-- `COLLECTOR_FLUSH_INTERVAL_SECONDS`
-- `COLLECTOR_BATCH_SIZE`
-- `COLLECTOR_RECONNECT_DELAY_SECONDS`
-- `COLLECTOR_MAX_RECONNECT_ATTEMPTS`
-- `COLLECTOR_HEALTH_LOG_INTERVAL_SECONDS`
+From `config/settings.yaml` and `.env`:
 
-Inspect the effective merged config with:
+- `DATA_ROOT`
+- `MARKET_RAW_DIR`
+- `SUPPORTED_SYMBOLS`
+- `LOG_LEVEL`
+- `TIMEZONE`
+- `FEATURE_GAP_THRESHOLD_SECONDS`
+- `FEATURE_MAX_ABS_SPREAD_BPS`
+- `FEATURE_FORWARD_FILL_LIMIT`
+- `FEATURE_DROP_OUTSIDE_REGULAR_HOURS`
+- `FEATURE_ROLLING_SHORT_WINDOW`
+- `FEATURE_ROLLING_MEDIUM_WINDOW`
+- `FEATURE_ROLLING_LONG_WINDOW`
+- `FEATURE_VWAP_WINDOW`
+- `FEATURE_VOLUME_WINDOW`
+- `FEATURE_LABEL_HORIZON_ROWS`
+- `FEATURE_TRAIN_SPLIT_RATIO`
+
+Inspect the effective config with:
 
 ```bash
 python app.py show-config
+python app.py --environment development show-config
 python app.py --environment deploy show-config
-```
-
-## IBKR Setup for PC2
-
-Before running the collector on the deployment machine:
-
-1. open `IB Gateway Paper` or `TWS Paper`
-2. enable socket/API access
-3. confirm the correct port:
-   - `IB Gateway Paper`: usually `4002`
-   - `TWS Paper`: usually `7497`
-4. keep `IB_COLLECTOR_CLIENT_ID` different from:
-   - `IB_CLIENT_ID`
-   - `IB_UI_CLIENT_ID`
-
-Recommended `.env` values for PC2:
-
-```dotenv
-APP_ENV=deploy
-IB_HOST=127.0.0.1
-IB_PORT=4002
-IB_CLIENT_ID=1
-IB_UI_CLIENT_ID=101
-IB_COLLECTOR_CLIENT_ID=201
-SUPPORTED_SYMBOLS=SPY
-COLLECTOR_ENABLED=true
-COLLECTOR_POLL_INTERVAL_SECONDS=5
-COLLECTOR_FLUSH_INTERVAL_SECONDS=20
-COLLECTOR_BATCH_SIZE=50
-COLLECTOR_RECONNECT_DELAY_SECONDS=10
-COLLECTOR_MAX_RECONNECT_ATTEMPTS=5
 ```
 
 ## Installation
@@ -179,80 +147,21 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Main Commands
+## Raw Data Layout
 
-### Collector
-
-One polling cycle:
-
-```bash
-python app.py collect --once
-```
-
-Continuous run:
-
-```bash
-python app.py --environment deploy collect
-```
-
-Bounded run:
-
-```bash
-python app.py --environment deploy collect --max-cycles 12
-python app.py --environment deploy collect --max-runtime-seconds 300
-```
-
-Override polling and flush parameters:
-
-```bash
-python app.py --environment deploy collect \
-  --symbols SPY QQQ \
-  --poll-interval 3 \
-  --flush-interval 15 \
-  --batch-size 25
-```
-
-### Healthcheck
-
-Config and writable paths only:
-
-```bash
-python app.py healthcheck --skip-broker
-```
-
-Full collector-oriented broker check:
-
-```bash
-python app.py --environment deploy healthcheck
-```
-
-### Script entrypoints
-
-```bash
-python scripts/run_collector.py --environment deploy --once
-python scripts/healthcheck.py --environment deploy --skip-broker
-```
-
-### Other preserved workflows
-
-```bash
-python app.py run-session
-python app.py train --model-type baseline
-python app.py backtest
-python app.py dashboard
-```
-
-## Output Data Layout
-
-Collected market data is written under:
+The collector on `PC2` writes raw market data under:
 
 ```text
 data/raw/market/YYYY-MM-DD/SYMBOL/collector_*.parquet
 ```
 
-This layout is intentionally partitioned by day and symbol instead of rewriting a single large file. It is safer for long-running collection and easier to sync from PC2 later.
+The phase 3 loader also accepts the flatter variant:
 
-### Current normalized columns
+```text
+data/raw/market/YYYY-MM-DD/SYMBOL.parquet
+```
+
+Expected raw columns are normalized around:
 
 - `timestamp`
 - `symbol`
@@ -271,69 +180,251 @@ This layout is intentionally partitioned by day and symbol instead of rewriting 
 - `exchange_time`
 - `collected_at`
 
+## Feature Output Layout
+
+Processed features are written to:
+
+```text
+data/features/YYYY-MM-DD/SYMBOL.parquet
+```
+
+Feature-build reports are written to:
+
+```text
+data/reports/feature_build_report_<timestamp>.json
+```
+
+## Features Implemented
+
+### ORB Features
+
+- `orb_high`
+- `orb_low`
+- `orb_range_mid`
+- `orb_range_width`
+- `orb_range_width_bps`
+- `orb_relative_price_position`
+- `breakout_distance`
+- `breakout_distance_bps`
+- `orb_range_complete`
+- `minutes_since_open`
+
+### Microstructure Features
+
+- `mid_price`
+- `micro_price`
+- `spread`
+- `spread_bps`
+- `bid_ask_imbalance`
+- `rolling_spread_mean_bps`
+- `rolling_spread_std_bps`
+- `rolling_imbalance_mean`
+- `rolling_imbalance_std`
+
+### Intraday Features
+
+- `return_1_bps`
+- `return_short_bps`
+- `return_medium_bps`
+- `rolling_volatility_short_bps`
+- `rolling_volatility_medium_bps`
+- `rolling_volatility_long_bps`
+- `vwap_approx`
+- `distance_to_vwap_bps`
+- `relative_volume`
+- `time_of_day_sin`
+- `time_of_day_cos`
+
+### Cost Features
+
+- `spread_proxy_bps`
+- `slippage_proxy_bps`
+- `estimated_cost_bps`
+
+## Data Quality Validation
+
+The validation layer checks for:
+
+- missing timestamps
+- duplicated rows
+- large timestamp gaps
+- critical nulls
+- `bid > ask`
+- negative spreads
+- absurd spreads in bps
+- rows outside regular market hours
+
+The feature pipeline logs detected issues before and after cleaning so you can see whether cleaning fixed them or whether they remain in the source data.
+
+## Cleaning Rules
+
+Cleaning currently does the following:
+
+- enforce timestamp parsing and numeric types
+- sort by `symbol` and `timestamp`
+- drop duplicate `(symbol, timestamp)` rows
+- forward fill quote fields with a bounded limit
+- recompute `mid_price` and `spread` from cleaned quotes
+- discard invalid quotes and absurd spreads
+- optionally drop rows outside regular hours
+- attach session metadata used by feature generation
+
+The cleaning layer is intentionally conservative. It avoids inventing values beyond bounded forward fill.
+
+## Main Commands
+
+### Build Features on PC1
+
+Default run on configured symbols:
+
+```bash
+python app.py build-features
+```
+
+Date-bounded run:
+
+```bash
+python app.py build-features --start-date 2026-04-01 --end-date 2026-04-05
+```
+
+Symbol override:
+
+```bash
+python app.py build-features --symbols SPY QQQ
+```
+
+Custom roots:
+
+```bash
+python app.py build-features \
+  --input-root /path/to/raw_market \
+  --output-root /path/to/feature_output
+```
+
+Script entrypoint:
+
+```bash
+python scripts/build_features.py --symbols SPY QQQ
+```
+
+### Collector on PC2
+
+One bounded cycle:
+
+```bash
+python app.py --environment deploy collect --once
+```
+
+Longer deploy-side run:
+
+```bash
+python app.py --environment deploy collect --max-cycles 120
+```
+
+### Healthcheck
+
+Config and paths only:
+
+```bash
+python app.py healthcheck --skip-broker
+```
+
+Collector-oriented broker check:
+
+```bash
+python app.py --environment deploy healthcheck
+```
+
+Script form:
+
+```bash
+python scripts/healthcheck.py --environment deploy --skip-broker
+```
+
+## Example Workflow
+
+### PC2
+
+Collect raw market data:
+
+```bash
+python app.py --environment deploy collect --max-cycles 60
+```
+
+### PC1
+
+Build research features from the synced raw data:
+
+```bash
+python app.py --environment development build-features --symbols SPY QQQ
+```
+
+## Dataset Builder
+
+`labels/dataset_builder.py` prepares the next step for training workflows:
+
+- selects numeric feature columns
+- creates a placeholder future-return target
+- keeps temporal ordering intact
+- produces a temporal train/test split
+
+This is intentionally a base layer, not the final production labeling design.
+
 ## Logging
 
-Logs are written through the shared logger in [monitoring/logging.py](/home/santiago/ibkr_invest/monitoring/logging.py).
+Shared logging comes from `monitoring/logging.py`.
 
-The collector logs at least:
+Phase 3 logs at least:
 
-- startup
-- IBKR connection attempts
-- reconnect attempts
-- polling health heartbeat
-- parquet flush counts
-- shutdown
+- pipeline start and finish
+- raw rows loaded
+- symbols and day range processed
+- quality issues detected
+- cleaned row counts
+- feature row counts
+- written parquet files
+- report path and runtime duration
 
-Default log file:
+Default log location:
 
 ```text
 data/logs/microalpha.log
 ```
 
-## Healthcheck Coverage
+## Current Limitations
 
-The healthcheck now validates:
+Phase 3 is intentionally limited:
 
-- config loading
-- environment mode
-- collector symbols
-- collector output path
-- output path writability
-- IBKR reachability through the collector client
-- dedicated collector `clientId`
+- no final labels yet
+- no advanced outlier correction
+- no feature-store versioning beyond parquet partitions
+- no online feature computation on `PC2`
+- no inference or execution
+- no cross-day session stitching logic for multi-session products
+- no advanced sync orchestration between machines
 
-## Limitations of Phase 2
+## What Phase 4 Should Add
 
-Current collector limits are intentional:
+Phase 4 can now build on this data foundation:
 
-- polling snapshots, not a full streaming market data bus
-- no execution or order placement
-- no online feature generation yet
-- no online quality validation beyond basic normalization and persistence
-- parquet batches are append-safe by partition, but there is no compaction job yet
-- reconnect logic is basic and local-process only
-
-## Phase 3 Targets
-
-Phase 3 can now build directly on this collector foundation:
-
-- online feature generation
-- data quality checks and gap detection
-- richer event types
-- incremental validation of raw market data
-- deploy-side inference preparation
-- artifact promotion between PC1 and PC2
+- richer label generation
+- training datasets tied to explicit prediction horizons
+- stronger data-quality reports and dashboards
+- feature-store validation and versioning rules
+- online feature parity between `PC2` and `PC1`
+- inference-preparation pipeline
 
 ## Tests
+
+Run the full suite with:
 
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests
 ```
 
-Current local validation completed on this branch:
+Phase 3 added tests for:
 
-- CLI help
-- healthcheck
-- collector unit tests
-- parquet persistence tests
-- reconnect behavior tests
+- raw parquet loading across multiple days and layouts
+- data-quality issue detection
+- cleaning + feature build end to end
+- dataset builder temporal splits

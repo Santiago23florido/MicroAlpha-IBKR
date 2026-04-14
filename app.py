@@ -16,6 +16,7 @@ from backtest.runner import run_backtest_stub
 from broker.ib_client import IBClientError
 from config import Settings, load_settings
 from engine.runtime import RuntimeServices, build_runtime
+from features.feature_pipeline import run_feature_build_pipeline
 from ingestion.collector import collect_market_data
 from ingestion.ibkr_client import build_collector_ib_client
 from models.train_baseline import train_baseline_model
@@ -27,8 +28,8 @@ from monitoring.sync import sync_data_artifacts
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "MicroAlpha-IBKR phase 2 collector foundation. "
-            "Use development mode on PC1 for research/backtesting/training and deploy mode on PC2 for operational collection."
+            "MicroAlpha-IBKR phase 3 data pipeline foundation. "
+            "Use development mode on PC1 for research/data processing and deploy mode on PC2 for operational collection."
         )
     )
     parser.add_argument("--env-file", default=".env", help="Path to the environment file.")
@@ -53,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--flush-interval", type=float, help="Override the parquet flush interval in seconds.")
     collect_parser.add_argument("--batch-size", type=int, help="Override the in-memory batch size.")
     collect_parser.add_argument("--output-root", help="Optional raw-data destination override.")
+
+    build_features_parser = subparsers.add_parser(
+        "build-features",
+        help="Load raw market data, validate it, clean it, engineer features, and persist feature parquet files.",
+    )
+    build_features_parser.add_argument("--symbols", nargs="+", help="Override the configured symbol universe.")
+    build_features_parser.add_argument("--start-date", help="Filter raw data from this session date (YYYY-MM-DD).")
+    build_features_parser.add_argument("--end-date", help="Filter raw data until this session date (YYYY-MM-DD).")
+    build_features_parser.add_argument("--input-root", help="Override the raw market input root.")
+    build_features_parser.add_argument("--output-root", help="Override the processed feature output root.")
 
     train_parser = subparsers.add_parser("train", help="Train the baseline or deep model from a local dataset.")
     train_parser.add_argument("--model-type", required=True, choices=["baseline", "deep"])
@@ -145,6 +156,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     settings,
                     destination_root=args.destination_root,
                     execute=args.execute,
+                )
+            )
+            return 0
+
+        if args.command == "build-features":
+            print_result(
+                run_feature_build_pipeline(
+                    settings,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    input_root=args.input_root,
+                    output_root=args.output_root,
                 )
             )
             return 0
