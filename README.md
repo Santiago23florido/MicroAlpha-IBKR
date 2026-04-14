@@ -1,67 +1,55 @@
-# MicroAlpha-IBKR Phase 2 Collector Foundation
+# MicroAlpha-IBKR Phase 4 Drive Sync and Retention
 
-## Purpose of Phase 2
+## Purpose
 
-Phase 1 left the repository organized for a two-machine setup:
+The repository is organized around a two-machine setup:
 
-- `PC1`: development, research, training, backtesting, validation
-- `PC2`: deployment, market data collection, operational monitoring, later inference
+- `PC1`: research, data validation, feature engineering, training, backtesting
+- `PC2`: IBKR collection, local persistence, operational monitoring, local retention, Drive sync
 
-Phase 2 implements the first operational component for `PC2`: a robust market data collector for IBKR.
+Phase 1 organized the repo and CLI.
+Phase 2 added the collector on `PC2`.
+Phase 3 added the `PC1` data pipeline and feature generation.
+Phase 4 adds a safe sync-and-retention layer between `PC2` local storage and a Google Drive Desktop sync folder.
 
-This phase does **not** implement autonomous trading, strategy execution, final paper trading, advanced backtesting, news, RL, or online inference. It focuses on a clean and extensible data collection node.
+## Core Rule for Phase 4
 
-## What Is New in Phase 2
+SQLite must **not** run live from Google Drive.
 
-The repository now includes:
+The supported model is:
 
-- a dedicated collector client layer in [ingestion/ibkr_client.py](/home/santiago/ibkr_invest/ingestion/ibkr_client.py)
-- normalized market data records in [ingestion/market_data.py](/home/santiago/ibkr_invest/ingestion/market_data.py)
-- parquet persistence with batching in [ingestion/persistence.py](/home/santiago/ibkr_invest/ingestion/persistence.py)
-- a reconnecting polling collector loop in [ingestion/collector.py](/home/santiago/ibkr_invest/ingestion/collector.py)
-- stronger collector health reporting in [monitoring/healthcheck.py](/home/santiago/ibkr_invest/monitoring/healthcheck.py)
-- collector-specific config values in [config/settings.yaml](/home/santiago/ibkr_invest/config/settings.yaml)
+1. SQLite runs only on local disk on `PC2`
+2. raw parquet and feature parquet are written locally on `PC2`
+3. a sync process copies files into a local Google Drive folder
+4. SQLite is copied only as a snapshot backup
+5. local cleanup deletes files only after destination validation
 
-## Architecture
+This phase does **not** implement autonomous trading, final execution, advanced modeling, RL, or cloud-native orchestration.
 
-### PC1
+## Phase 4 Scope
 
-Use `development` mode for:
+Phase 4 adds:
 
-- training
-- backtesting
-- session validation
-- dashboard inspection
+- validated sync into a local Google Drive Desktop folder
+- safe local snapshot backups of SQLite
+- configurable retention and cleanup on `PC2`
+- dry-run support for sync and cleanup
+- sync status reporting
+- logging and JSON reports for sync operations
 
-### PC2
+## PC2 Local + Drive Architecture
 
-Use `deploy` mode for:
+The intended flow on `PC2` is now:
 
-- IBKR connectivity
-- continuous or bounded market data polling
-- parquet persistence under `data/raw/market`
-- operational health checks
+1. collector writes local raw parquet into `data/raw/market/`
+2. later phases may write local features into `data/features/`
+3. runtime SQLite stays local, for example under `data/processed/runtime/`
+4. `python app.py backup-sqlite` creates a snapshot in `data/meta/sqlite_backups/`
+5. `python app.py sync-drive` copies local artifacts into the configured Google Drive Desktop folder
+6. copied files are validated locally in the Drive folder
+7. `python app.py cleanup-local` deletes only files that are both validated and old enough
 
-## Collector Design
-
-The collector intentionally uses polling, not a second low-level streaming stack. That choice is deliberate:
-
-- the repo already had a working IBKR client for snapshots and historical fallback
-- polling is simpler to deploy and observe on PC2
-- it avoids introducing a parallel IBKR implementation before phase 3
-
-Current flow:
-
-1. load config from `.env` + `config/*.yaml`
-2. build collector logger
-3. validate output path
-4. connect to IBKR using a dedicated collector `clientId`
-5. poll snapshots for configured symbols
-6. normalize records to one schema
-7. buffer in memory
-8. flush parquet batches by date and symbol
-9. log health, errors and reconnect attempts
-10. flush and disconnect cleanly on exit
+The Google Drive Desktop client is responsible for cloud upload. This code validates only the local copy inside the sync folder.
 
 ## Project Structure
 
@@ -69,104 +57,87 @@ Current flow:
 MicroAlpha-IBKR/
 ├── app.py
 ├── config/
+│   ├── settings.yaml
+│   ├── risk.yaml
+│   ├── symbols.yaml
+│   └── deployment.yaml
+├── deployment/
+│   ├── drive_sync.py
+│   ├── retention.py
+│   └── sqlite_backup.py
 ├── data/
+│   ├── loader.py
+│   ├── cleaning.py
 │   ├── raw/
 │   │   └── market/
-│   ├── processed/
 │   ├── features/
-│   ├── models/
+│   ├── processed/
+│   ├── meta/
+│   │   └── sqlite_backups/
 │   ├── logs/
 │   └── reports/
+│       └── sync/
 ├── ingestion/
-│   ├── ibkr_client.py
-│   ├── market_data.py
-│   ├── persistence.py
 │   └── collector.py
+├── features/
+│   └── feature_pipeline.py
+├── labels/
+│   └── dataset_builder.py
 ├── monitoring/
-│   ├── logging.py
 │   ├── healthcheck.py
-│   └── sync.py
+│   ├── logging.py
+│   └── data_quality.py
 ├── scripts/
 │   ├── run_collector.py
-│   ├── healthcheck.py
-│   ├── run_session.py
-│   ├── train_model.py
-│   └── sync_data.py
+│   ├── build_features.py
+│   ├── sync_to_drive.py
+│   ├── cleanup_local.py
+│   ├── backup_sqlite.py
+│   └── healthcheck.py
 └── tests/
 ```
-
-Existing working modules from earlier phases are still present:
-
-- `broker/`
-- `engine/`
-- `strategy/`
-- `risk/`
-- `models/`
-- `ui/`
-- `storage/`
 
 ## Configuration
 
 Configuration is merged from:
 
 - `.env`
-- [config/settings.yaml](/home/santiago/ibkr_invest/config/settings.yaml)
-- [config/risk.yaml](/home/santiago/ibkr_invest/config/risk.yaml)
-- [config/symbols.yaml](/home/santiago/ibkr_invest/config/symbols.yaml)
-- [config/deployment.yaml](/home/santiago/ibkr_invest/config/deployment.yaml)
+- `config/settings.yaml`
+- `config/risk.yaml`
+- `config/symbols.yaml`
+- `config/deployment.yaml`
 
-### Environment modes
+Environment modes:
 
-- `development`
-- `deploy`
+- `development` for `PC1`
+- `deploy` for `PC2`
 
-### Collector-specific settings
+### Phase 4 Settings
 
-- `IB_COLLECTOR_CLIENT_ID`
-- `COLLECTOR_MODE`
-- `COLLECTOR_POLL_INTERVAL_SECONDS`
-- `COLLECTOR_FLUSH_INTERVAL_SECONDS`
-- `COLLECTOR_BATCH_SIZE`
-- `COLLECTOR_RECONNECT_DELAY_SECONDS`
-- `COLLECTOR_MAX_RECONNECT_ATTEMPTS`
-- `COLLECTOR_HEALTH_LOG_INTERVAL_SECONDS`
+Relevant sync settings:
 
-Inspect the effective merged config with:
+- `SYNC_ENABLED`
+- `GOOGLE_DRIVE_ROOT`
+- `GOOGLE_DRIVE_SUBDIR`
+- `SYNC_RAW_ENABLED`
+- `SYNC_FEATURES_ENABLED`
+- `SYNC_SQLITE_ENABLED`
+- `SYNC_LOGS_ENABLED`
+- `DELETE_AFTER_SYNC`
+- `DELETE_MIN_AGE_HOURS`
+- `RETENTION_DAYS_LOCAL`
+- `SYNC_DRY_RUN`
+- `SYNC_VALIDATE_CHECKSUM`
+- `SQLITE_BACKUP_FILENAME`
+- `SQLITE_SOURCE_PATH`
+- `SQLITE_BACKUP_DIR`
+- `SYNC_REPORT_DIR`
+
+Inspect the effective config with:
 
 ```bash
 python app.py show-config
 python app.py --environment deploy show-config
-```
-
-## IBKR Setup for PC2
-
-Before running the collector on the deployment machine:
-
-1. open `IB Gateway Paper` or `TWS Paper`
-2. enable socket/API access
-3. confirm the correct port:
-   - `IB Gateway Paper`: usually `4002`
-   - `TWS Paper`: usually `7497`
-4. keep `IB_COLLECTOR_CLIENT_ID` different from:
-   - `IB_CLIENT_ID`
-   - `IB_UI_CLIENT_ID`
-
-Recommended `.env` values for PC2:
-
-```dotenv
-APP_ENV=deploy
-IB_HOST=127.0.0.1
-IB_PORT=4002
-IB_CLIENT_ID=1
-IB_UI_CLIENT_ID=101
-IB_COLLECTOR_CLIENT_ID=201
-SUPPORTED_SYMBOLS=SPY
-COLLECTOR_ENABLED=true
-COLLECTOR_POLL_INTERVAL_SECONDS=5
-COLLECTOR_FLUSH_INTERVAL_SECONDS=20
-COLLECTOR_BATCH_SIZE=50
-COLLECTOR_RECONNECT_DELAY_SECONDS=10
-COLLECTOR_MAX_RECONNECT_ATTEMPTS=5
 ```
 
 ## Installation
@@ -179,161 +150,269 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Main Commands
+## Google Drive Desktop Setup
 
-### Collector
+This implementation assumes you have a local folder already managed by Google Drive Desktop, for example:
 
-One polling cycle:
-
-```bash
-python app.py collect --once
+```text
+G:/My Drive
+/mnt/g/My Drive
+/home/<user>/Google Drive
 ```
 
-Continuous run:
+Set `GOOGLE_DRIVE_ROOT` to that local folder. The application will create or use a subdirectory inside it, controlled by `GOOGLE_DRIVE_SUBDIR`.
 
-```bash
-python app.py --environment deploy collect
+Example:
+
+```dotenv
+GOOGLE_DRIVE_ROOT=/mnt/g/My Drive
+GOOGLE_DRIVE_SUBDIR=microalpha
 ```
 
-Bounded run:
+The resulting local Drive base would be:
 
-```bash
-python app.py --environment deploy collect --max-cycles 12
-python app.py --environment deploy collect --max-runtime-seconds 300
+```text
+/mnt/g/My Drive/microalpha
 ```
 
-Override polling and flush parameters:
+## Local Data Layout on PC2
 
-```bash
-python app.py --environment deploy collect \
-  --symbols SPY QQQ \
-  --poll-interval 3 \
-  --flush-interval 15 \
-  --batch-size 25
-```
-
-### Healthcheck
-
-Config and writable paths only:
-
-```bash
-python app.py healthcheck --skip-broker
-```
-
-Full collector-oriented broker check:
-
-```bash
-python app.py --environment deploy healthcheck
-```
-
-### Script entrypoints
-
-```bash
-python scripts/run_collector.py --environment deploy --once
-python scripts/healthcheck.py --environment deploy --skip-broker
-```
-
-### Other preserved workflows
-
-```bash
-python app.py run-session
-python app.py train --model-type baseline
-python app.py backtest
-python app.py dashboard
-```
-
-## Output Data Layout
-
-Collected market data is written under:
+Raw collector output:
 
 ```text
 data/raw/market/YYYY-MM-DD/SYMBOL/collector_*.parquet
 ```
 
-This layout is intentionally partitioned by day and symbol instead of rewriting a single large file. It is safer for long-running collection and easier to sync from PC2 later.
-
-### Current normalized columns
-
-- `timestamp`
-- `symbol`
-- `last_price`
-- `bid`
-- `ask`
-- `spread`
-- `bid_size`
-- `ask_size`
-- `last_size`
-- `volume`
-- `event_type`
-- `source`
-- `session_window`
-- `is_market_open`
-- `exchange_time`
-- `collected_at`
-
-## Logging
-
-Logs are written through the shared logger in [monitoring/logging.py](/home/santiago/ibkr_invest/monitoring/logging.py).
-
-The collector logs at least:
-
-- startup
-- IBKR connection attempts
-- reconnect attempts
-- polling health heartbeat
-- parquet flush counts
-- shutdown
-
-Default log file:
+Processed feature output:
 
 ```text
-data/logs/microalpha.log
+data/features/YYYY-MM-DD/SYMBOL.parquet
 ```
 
-## Healthcheck Coverage
+SQLite runtime database:
 
-The healthcheck now validates:
+```text
+data/processed/runtime/microalpha.db
+```
 
-- config loading
-- environment mode
-- collector symbols
-- collector output path
-- output path writability
-- IBKR reachability through the collector client
-- dedicated collector `clientId`
+Local SQLite snapshot backups:
 
-## Limitations of Phase 2
+```text
+data/meta/sqlite_backups/*.sqlite
+```
 
-Current collector limits are intentional:
+Sync reports:
 
-- polling snapshots, not a full streaming market data bus
-- no execution or order placement
-- no online feature generation yet
-- no online quality validation beyond basic normalization and persistence
-- parquet batches are append-safe by partition, but there is no compaction job yet
-- reconnect logic is basic and local-process only
+```text
+data/reports/sync/*.json
+```
 
-## Phase 3 Targets
+## Drive Destination Layout
 
-Phase 3 can now build directly on this collector foundation:
+Inside the local Google Drive folder, files are copied into this structure:
 
-- online feature generation
-- data quality checks and gap detection
-- richer event types
-- incremental validation of raw market data
-- deploy-side inference preparation
-- artifact promotion between PC1 and PC2
+```text
+<GOOGLE_DRIVE_ROOT>/<GOOGLE_DRIVE_SUBDIR>/
+├── raw/
+│   └── market/YYYY-MM-DD/SYMBOL/collector_*.parquet
+├── features/
+│   └── YYYY-MM-DD/SYMBOL.parquet
+├── meta/
+│   └── sqlite/*.sqlite
+└── logs/
+```
+
+## Safety Model
+
+Before any local file is considered synced, the system validates:
+
+- destination file exists
+- destination size is greater than zero
+- destination size matches the source exactly
+- optional checksum match when enabled
+
+Files are never deleted without validation.
+
+## Main Commands
+
+### Collector on PC2
+
+```bash
+python app.py --environment deploy collect --once
+python app.py --environment deploy collect --max-cycles 120
+```
+
+### Feature Build on PC1
+
+```bash
+python app.py --environment development build-features
+python app.py --environment development build-features --symbols SPY QQQ
+```
+
+### Sync to Google Drive
+
+Dry-run using configured defaults:
+
+```bash
+python app.py --environment deploy sync-drive
+```
+
+Explicit execution:
+
+```bash
+python app.py --environment deploy sync-drive --no-dry-run
+```
+
+Sync only selected categories:
+
+```bash
+python app.py --environment deploy sync-drive --categories raw features
+```
+
+Enable deletion right after validated sync:
+
+```bash
+python app.py --environment deploy sync-drive --no-dry-run --delete-after-sync
+```
+
+Script entrypoint:
+
+```bash
+python scripts/sync_to_drive.py --environment deploy --no-dry-run
+```
+
+### Local Cleanup
+
+Dry-run cleanup:
+
+```bash
+python app.py --environment deploy cleanup-local
+```
+
+Execute cleanup:
+
+```bash
+python app.py --environment deploy cleanup-local --no-dry-run
+```
+
+Script entrypoint:
+
+```bash
+python scripts/cleanup_local.py --environment deploy --no-dry-run
+```
+
+### SQLite Backup
+
+Dry-run backup:
+
+```bash
+python app.py --environment deploy backup-sqlite
+```
+
+Create a real local snapshot:
+
+```bash
+python app.py --environment deploy backup-sqlite --no-dry-run
+```
+
+Script entrypoint:
+
+```bash
+python scripts/backup_sqlite.py --environment deploy --no-dry-run
+```
+
+### Sync Status
+
+```bash
+python app.py --environment deploy sync-status
+```
+
+This reports:
+
+- pending local files
+- already-synced files
+- invalid destination copies
+- estimated deletable bytes
+- Drive folder availability
+- latest sync report path and status
+
+### Healthcheck
+
+```bash
+python app.py healthcheck --skip-broker
+python app.py --environment deploy healthcheck
+```
+
+## Phase 3 Data Pipeline Still Present
+
+Phase 4 does not remove the research pipeline introduced in phase 3. The repository still supports:
+
+- raw parquet loading
+- data-quality validation
+- deterministic cleaning
+- ORB, microstructure, intraday, and cost features
+- dataset preparation for later training
+
+## Logging and Reports
+
+Shared logging is handled by `monitoring/logging.py`.
+
+Phase 4 logs:
+
+- sync start and finish
+- Drive path availability
+- SQLite backup creation
+- files copied
+- files skipped
+- validation failures
+- files deleted
+- dry-run mode
+
+Structured JSON reports are written under:
+
+```text
+data/reports/sync/
+```
+
+## Important Limitation
+
+Validation only confirms the file exists in the local Google Drive folder and matches the local source by size and, optionally, checksum.
+
+It does **not** confirm that Google Drive has already uploaded the file to the cloud. That responsibility belongs to the Google Drive Desktop client.
+
+## Current Limitations
+
+Phase 4 is intentionally conservative:
+
+- no cloud API integration
+- no remote upload acknowledgment beyond local Drive-folder validation
+- no deduplicated manifest database for sync state
+- no advanced space-pressure scheduler yet
+- no object-store or remote checksum catalog
+- no final deployment supervisor service yet
+
+## What Phase 5 Should Add
+
+Phase 5 can now build on this foundation:
+
+- scheduled sync and cleanup jobs on `PC2`
+- stronger retention policies by class of data
+- Drive sync monitoring and alerting
+- artifact promotion from Drive into `PC1` research workflows
+- tighter end-to-end automation between collection, sync, feature build, and training
 
 ## Tests
+
+Run the full suite with:
 
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests
 ```
 
-Current local validation completed on this branch:
+Phase 4 specifically adds tests for:
 
-- CLI help
-- healthcheck
-- collector unit tests
-- parquet persistence tests
-- reconnect behavior tests
+- SQLite snapshot backup creation
+- Drive sync dry-run and real copy behavior
+- validation before deletion
+- cleanup of only confirmed synced files
+- sync status reporting
