@@ -123,7 +123,12 @@ def validate_imports(
         for column in RAW_MARKET_COLUMNS:
             if column not in standardized.columns:
                 standardized[column] = pd.NA
-        standardized = standardized[[*RAW_MARKET_COLUMNS, "source_file"]]
+        extra_columns = [
+            column
+            for column in standardized.columns
+            if column not in RAW_MARKET_COLUMNS and column != "source_file"
+        ]
+        standardized = standardized[[*RAW_MARKET_COLUMNS, *extra_columns, "source_file"]]
 
         item["row_count"] = int(len(standardized))
         item["column_count"] = int(len(frame.columns))

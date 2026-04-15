@@ -46,7 +46,6 @@ def clean_market_data(frame: pd.DataFrame, settings: Settings) -> pd.DataFrame:
         cleaned["last_price"],
     )
     cleaned["last_price"] = cleaned["last_price"].fillna(cleaned["mid_price"])
-    cleaned["volume"] = cleaned["volume"].fillna(0.0)
     cleaned["spread"] = cleaned["ask"] - cleaned["bid"]
     cleaned["spread_bps"] = np.where(
         cleaned["mid_price"] > 0,
