@@ -1,0 +1,321 @@
+defaults:
+  default_feature_set: hybrid_intraday
+
+feature_sets:
+  core_price_only:
+    description: Price-driven indicators that only need a usable price proxy and timestamps.
+    families:
+      - trend
+      - momentum
+      - volatility
+      - intraday_structure
+    indicators:
+      - sma
+      - ema
+      - moving_average_distance
+      - moving_average_slope
+      - ma_crossover_short_long
+      - macd_line
+      - macd_signal
+      - macd_histogram
+      - rsi
+      - roc
+      - momentum_simple
+      - true_range
+      - atr
+      - rolling_volatility
+      - rolling_std_returns
+      - zscore_price
+      - orb_width
+      - minute_of_day
+      - seconds_since_open
+      - seconds_to_close
+      - opening_session_flag
+      - midday_flag
+      - closing_session_flag
+      - day_of_week
+    minimum_columns:
+      - timestamp
+      - symbol
+      - last_price
+
+  core_intraday:
+    description: Session-structure features with intraday volatility context.
+    families:
+      - volatility
+      - intraday_structure
+    indicators:
+      - true_range
+      - atr
+      - rolling_volatility
+      - rolling_std_returns
+      - orb_width
+      - minute_of_day
+      - seconds_since_open
+      - seconds_to_close
+      - opening_session_flag
+      - midday_flag
+      - closing_session_flag
+      - day_of_week
+      - intraday_volume_percentile
+      - intraday_spread_percentile
+    minimum_columns:
+      - timestamp
+      - symbol
+      - last_price
+
+  technical_basic:
+    description: Trend, momentum, and volatility indicators without order-book features.
+    families:
+      - trend
+      - momentum
+      - volatility
+    indicators:
+      - sma
+      - ema
+      - moving_average_distance
+      - moving_average_slope
+      - ma_crossover_short_long
+      - macd_line
+      - macd_signal
+      - macd_histogram
+      - adx
+      - plus_di
+      - minus_di
+      - rsi
+      - roc
+      - momentum_simple
+      - stochastic_k
+      - stochastic_d
+      - williams_r
+      - cci
+      - true_range
+      - atr
+      - rolling_volatility
+      - rolling_std_returns
+      - bollinger_mid
+      - bollinger_upper
+      - bollinger_lower
+      - bollinger_bandwidth
+      - zscore_price
+      - orb_width
+    minimum_columns:
+      - timestamp
+      - symbol
+      - last_price
+
+  technical_plus_volume:
+    description: Technical indicators plus volume and VWAP context.
+    families:
+      - trend
+      - momentum
+      - volatility
+      - volume_flow
+    indicators:
+      - sma
+      - ema
+      - moving_average_distance
+      - moving_average_slope
+      - ma_crossover_short_long
+      - macd_line
+      - macd_signal
+      - macd_histogram
+      - adx
+      - plus_di
+      - minus_di
+      - rsi
+      - roc
+      - momentum_simple
+      - stochastic_k
+      - stochastic_d
+      - williams_r
+      - cci
+      - true_range
+      - atr
+      - rolling_volatility
+      - rolling_std_returns
+      - bollinger_mid
+      - bollinger_upper
+      - bollinger_lower
+      - bollinger_bandwidth
+      - zscore_price
+      - orb_width
+      - rolling_volume_mean
+      - relative_volume
+      - vwap
+      - distance_to_vwap
+      - vwap_slope
+      - obv
+      - volume_spike_flag
+      - accumulation_distribution
+      - mfi
+    minimum_columns:
+      - timestamp
+      - symbol
+      - last_price
+      - volume
+
+  microstructure_core:
+    description: Order-book and spread-sensitive indicators for quote-aware datasets.
+    families:
+      - microstructure
+      - intraday_structure
+    indicators:
+      - spread
+      - spread_bps
+      - mid_price
+      - weighted_mid_price
+      - imbalance
+      - rolling_imbalance
+      - delta_imbalance
+      - total_depth
+      - depth_ratio
+      - microprice_proxy
+      - minute_of_day
+      - seconds_since_open
+      - seconds_to_close
+      - opening_session_flag
+      - midday_flag
+      - closing_session_flag
+      - intraday_spread_percentile
+    minimum_columns:
+      - timestamp
+      - symbol
+      - bid
+      - ask
+
+  hybrid_intraday:
+    description: Balanced intraday set mixing price, volume, microstructure, and session structure.
+    families:
+      - trend
+      - momentum
+      - volatility
+      - volume_flow
+      - microstructure
+      - intraday_structure
+    indicators:
+      - sma
+      - ema
+      - moving_average_distance
+      - moving_average_slope
+      - ma_crossover_short_long
+      - macd_line
+      - macd_signal
+      - macd_histogram
+      - rsi
+      - roc
+      - momentum_simple
+      - stochastic_k
+      - stochastic_d
+      - williams_r
+      - cci
+      - true_range
+      - atr
+      - rolling_volatility
+      - rolling_std_returns
+      - bollinger_mid
+      - bollinger_upper
+      - bollinger_lower
+      - bollinger_bandwidth
+      - zscore_price
+      - orb_width
+      - rolling_volume_mean
+      - relative_volume
+      - vwap
+      - distance_to_vwap
+      - vwap_slope
+      - obv
+      - volume_spike_flag
+      - spread
+      - spread_bps
+      - mid_price
+      - weighted_mid_price
+      - imbalance
+      - rolling_imbalance
+      - delta_imbalance
+      - total_depth
+      - depth_ratio
+      - microprice_proxy
+      - minute_of_day
+      - seconds_since_open
+      - seconds_to_close
+      - opening_session_flag
+      - midday_flag
+      - closing_session_flag
+      - day_of_week
+      - intraday_volume_percentile
+      - intraday_spread_percentile
+    minimum_columns:
+      - timestamp
+      - symbol
+      - last_price
+
+  full_experimental:
+    description: All registered indicator families and optional flow indicators when the dataset supports them.
+    families:
+      - trend
+      - momentum
+      - volatility
+      - volume_flow
+      - microstructure
+      - intraday_structure
+    indicators:
+      - sma
+      - ema
+      - moving_average_distance
+      - moving_average_slope
+      - ma_crossover_short_long
+      - macd_line
+      - macd_signal
+      - macd_histogram
+      - adx
+      - plus_di
+      - minus_di
+      - rsi
+      - roc
+      - momentum_simple
+      - stochastic_k
+      - stochastic_d
+      - williams_r
+      - cci
+      - true_range
+      - atr
+      - rolling_volatility
+      - rolling_std_returns
+      - bollinger_mid
+      - bollinger_upper
+      - bollinger_lower
+      - bollinger_bandwidth
+      - zscore_price
+      - orb_width
+      - rolling_volume_mean
+      - relative_volume
+      - vwap
+      - distance_to_vwap
+      - vwap_slope
+      - obv
+      - volume_spike_flag
+      - accumulation_distribution
+      - mfi
+      - spread
+      - spread_bps
+      - mid_price
+      - weighted_mid_price
+      - imbalance
+      - rolling_imbalance
+      - delta_imbalance
+      - total_depth
+      - depth_ratio
+      - microprice_proxy
+      - minute_of_day
+      - seconds_since_open
+      - seconds_to_close
+      - opening_session_flag
+      - midday_flag
+      - closing_session_flag
+      - day_of_week
+      - intraday_volume_percentile
+      - intraday_spread_percentile
+    minimum_columns:
+      - timestamp
+      - symbol

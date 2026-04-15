@@ -17,7 +17,12 @@ from broker.ib_client import IBClientError
 from config import Settings, load_settings
 from deployment.lan_sync import pull_from_pc2
 from engine.runtime import RuntimeServices, build_runtime
-from features.feature_pipeline import run_feature_build_pipeline
+from features.feature_pipeline import (
+    inspect_feature_dependencies_for_build,
+    list_available_feature_sets,
+    run_feature_build_pipeline,
+)
+from features.validation import validate_feature_store
 from ingestion.collector import collect_market_data
 from ingestion.ibkr_client import build_collector_ib_client
 from models.train_baseline import train_baseline_model
@@ -30,7 +35,7 @@ from monitoring.sync import sync_data_artifacts
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "MicroAlpha-IBKR phase 4 LAN transfer and data pipeline foundation. "
+            "MicroAlpha-IBKR LAN data pipeline with configurable feature sets and dependency-aware feature engineering. "
             "Use deploy mode on PC2 for collection and development mode on PC1 for LAN pull, import validation, and feature generation."
         )
     )
@@ -82,13 +87,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     build_features_parser = subparsers.add_parser(
         "build-features",
-        help="Load imported raw market data, validate it, clean it, engineer features, and persist feature parquet files.",
+        help="Load imported raw market data, validate it, clean it, engineer a selected feature set, and persist feature parquet files.",
     )
     build_features_parser.add_argument("--symbols", nargs="+", help="Override the configured symbol universe.")
     build_features_parser.add_argument("--start-date", help="Filter raw data from this session date (YYYY-MM-DD).")
     build_features_parser.add_argument("--end-date", help="Filter raw data until this session date (YYYY-MM-DD).")
     build_features_parser.add_argument("--input-root", help="Override the imported raw market input root.")
     build_features_parser.add_argument("--output-root", help="Override the processed feature output root.")
+    build_features_parser.add_argument("--feature-set", help="Feature set name declared in config/feature_sets.yaml.")
+
+    subparsers.add_parser(
+        "list-feature-sets",
+        help="List configured feature sets, their families, and the configured default.",
+    )
+
+    inspect_dependencies_parser = subparsers.add_parser(
+        "inspect-feature-dependencies",
+        help="Inspect which indicators are compatible with the current dataset and why incompatible indicators would be skipped.",
+    )
+    inspect_dependencies_parser.add_argument("--symbols", nargs="+", help="Override the configured symbol universe.")
+    inspect_dependencies_parser.add_argument("--start-date", help="Filter raw data from this session date (YYYY-MM-DD).")
+    inspect_dependencies_parser.add_argument("--end-date", help="Filter raw data until this session date (YYYY-MM-DD).")
+    inspect_dependencies_parser.add_argument("--input-root", help="Override the imported raw market input root.")
+    inspect_dependencies_parser.add_argument("--feature-set", help="Feature set name declared in config/feature_sets.yaml.")
+
+    validate_features_parser = subparsers.add_parser(
+        "validate-features",
+        help="Validate generated feature parquet files for NaNs, constants, infinities, and duplicate columns.",
+    )
+    validate_features_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    validate_features_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    validate_features_parser.add_argument("--start-date", help="Validate features on or after this session date (YYYY-MM-DD).")
+    validate_features_parser.add_argument("--end-date", help="Validate features on or before this session date (YYYY-MM-DD).")
 
     dev_sync_parser = subparsers.add_parser(
         "dev-sync-and-build",
@@ -104,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     dev_sync_parser.add_argument("--overwrite-policy", choices=["if_newer", "always", "never"])
     dev_sync_parser.add_argument("--validate-parquet", action=argparse.BooleanOptionalAction, default=None)
     dev_sync_parser.add_argument("--output-root", help="Override the feature output root.")
+    dev_sync_parser.add_argument("--feature-set", help="Feature set name declared in config/feature_sets.yaml.")
 
     train_parser = subparsers.add_parser("train", help="Train the baseline or deep model from a local dataset.")
     train_parser.add_argument("--model-type", required=True, choices=["baseline", "deep"])
@@ -243,6 +274,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                     overwrite_policy=args.overwrite_policy,
                     validate_parquet=args.validate_parquet,
                     output_root=args.output_root,
+                    feature_set_name=args.feature_set,
+                )
+            )
+            return 0
+
+        if args.command == "list-feature-sets":
+            print_result(list_available_feature_sets(settings))
+            return 0
+
+        if args.command == "inspect-feature-dependencies":
+            print_result(
+                inspect_feature_dependencies_for_build(
+                    settings,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    input_root=args.input_root or settings.paths.import_market_dir,
+                    feature_set_name=args.feature_set,
                 )
             )
             return 0
@@ -256,6 +305,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     end_date=args.end_date,
                     input_root=args.input_root or settings.paths.import_market_dir,
                     output_root=args.output_root,
+                    feature_set_name=args.feature_set,
+                )
+            )
+            return 0
+
+        if args.command == "validate-features":
+            print_result(
+                validate_feature_store(
+                    settings,
+                    feature_root=args.feature_root or settings.paths.feature_dir,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
                 )
             )
             return 0
@@ -383,6 +445,7 @@ def run_dev_sync_and_build(
     overwrite_policy: str | None = None,
     validate_parquet: bool | None = None,
     output_root: str | None = None,
+    feature_set_name: str | None = None,
 ) -> dict[str, Any]:
     if categories and "raw" not in {category.strip().lower() for category in categories}:
         return {
@@ -433,6 +496,7 @@ def run_dev_sync_and_build(
         end_date=end_date,
         input_root=import_root,
         output_root=output_root,
+        feature_set_name=feature_set_name,
     )
     return {
         "status": "ok",

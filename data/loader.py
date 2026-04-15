@@ -128,7 +128,8 @@ def _standardize_market_frame(frame: pd.DataFrame, path: Path) -> pd.DataFrame:
         if column not in normalized.columns:
             normalized[column] = pd.NA
 
-    return normalized[RAW_MARKET_COLUMNS]
+    extra_columns = [column for column in normalized.columns if column not in RAW_MARKET_COLUMNS]
+    return normalized[[*RAW_MARKET_COLUMNS, *extra_columns]]
 
 
 def _coerce_date(value: str | date | None) -> date | None:

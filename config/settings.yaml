@@ -91,6 +91,8 @@ defaults:
     volume_window: 30
     label_horizon_rows: 1
     train_split_ratio: 0.8
+    default_feature_set: hybrid_intraday
+    validation_max_nan_ratio: 0.35
   lan_sync:
     pc2_network_root:
     source_market_subdir: data/raw/market
