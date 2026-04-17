@@ -1,0 +1,130 @@
+defaults:
+  dataset:
+    train_ratio: 0.7
+    validation_ratio: 0.15
+    test_ratio: 0.15
+    min_rows: 120
+    min_train_rows: 60
+    min_validation_rows: 20
+    min_test_rows: 20
+    min_unique_dates: 3
+    dropna_target: true
+    strict_feature_validation: true
+
+  targets:
+    classification_binary:
+      description: Binary continuation target based on future return crossing a positive threshold.
+      task_type: classification
+      horizon_bars: 5
+      threshold_bps: 4.0
+      negative_threshold_bps: 0.0
+      cost_adjustment_bps: 0.0
+      cost_adjustment_multiplier: 1.0
+      positive_label: 1
+      negative_label: 0
+
+    regression_point:
+      description: Point regression on future return in basis points.
+      task_type: regression
+      horizon_bars: 5
+      cost_adjustment_bps: 0.0
+      cost_adjustment_multiplier: 0.0
+
+    ordinal_classification:
+      description: Ordered return bins from very negative to very positive.
+      task_type: ordinal
+      horizon_bars: 5
+      bin_edges_bps: [-9999, -8, -2, 2, 8, 9999]
+      class_labels: [-2, -1, 0, 1, 2]
+      cost_adjustment_bps: 0.0
+      cost_adjustment_multiplier: 1.0
+
+    distribution_bins:
+      description: Distribution-oriented return bins for probabilistic classification over future outcomes.
+      task_type: distribution_bins
+      horizon_bars: 5
+      bin_edges_bps: [-9999, -12, -4, 0, 4, 12, 9999]
+      class_labels: [0, 1, 2, 3, 4, 5]
+      cost_adjustment_bps: 0.0
+      cost_adjustment_multiplier: 1.0
+
+    quantile_regression:
+      description: Point return target prepared for multiple quantile regressors.
+      task_type: quantile_regression
+      horizon_bars: 5
+      quantiles: [0.1, 0.5, 0.9]
+      cost_adjustment_bps: 0.0
+      cost_adjustment_multiplier: 0.0
+
+  model_grids:
+    logistic_regression:
+      C: [0.5, 1.0]
+      class_weight: [null, balanced]
+      max_iter: [500]
+
+    random_forest_classifier:
+      n_estimators: [100]
+      max_depth: [4, 8]
+      min_samples_leaf: [1, 4]
+      random_state: [42]
+
+    hist_gradient_boosting_classifier:
+      learning_rate: [0.05, 0.1]
+      max_depth: [3, 6]
+      max_iter: [150]
+      random_state: [42]
+
+    ridge_regression:
+      alpha: [0.5, 1.0, 2.0]
+      random_state: [42]
+
+    random_forest_regressor:
+      n_estimators: [100]
+      max_depth: [4, 8]
+      min_samples_leaf: [1, 4]
+      random_state: [42]
+
+    hist_gradient_boosting_regressor:
+      learning_rate: [0.05, 0.1]
+      max_depth: [3, 6]
+      max_iter: [150]
+      random_state: [42]
+
+    quantile_gradient_boosting:
+      learning_rate: [0.05, 0.1]
+      max_depth: [3]
+      n_estimators: [150]
+      min_samples_leaf: [2, 5]
+      random_state: [42]
+
+  experiment_profiles:
+    default:
+      description: Default robust phase 5 comparison profile for LAN-imported intraday data.
+      feature_sets:
+        - hybrid_intraday
+        - technical_plus_volume
+      target_modes:
+        - classification_binary
+        - regression_point
+        - ordinal_classification
+        - distribution_bins
+        - quantile_regression
+      model_map:
+        classification_binary:
+          - logistic_regression
+          - random_forest_classifier
+          - hist_gradient_boosting_classifier
+        ordinal_classification:
+          - logistic_regression
+          - random_forest_classifier
+          - hist_gradient_boosting_classifier
+        distribution_bins:
+          - logistic_regression
+          - hist_gradient_boosting_classifier
+        regression_point:
+          - ridge_regression
+          - random_forest_regressor
+          - hist_gradient_boosting_regressor
+        quantile_regression:
+          - quantile_gradient_boosting
+      max_combinations: 96

@@ -1,43 +1,38 @@
-# MicroAlpha-IBKR Phase 4 LAN Transfer and Data Pipeline
+# MicroAlpha-IBKR Phase 5: Flexible Modeling on Top of the LAN Research Pipeline
 
 ## Purpose
 
-This repository is organized around a two-machine setup on the same local network:
+This repository now supports a full Phase 5 research workflow on `PC1` while keeping the dual-machine architecture intact:
 
-- `PC2`: IBKR collector and operational data source
-- `PC1`: research, validation, feature engineering, model training, and evaluation
+- `PC2`: collector and operational raw data source
+- `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, and experiment tracking
 
-Phase 1 organized the repository and CLI.
-Phase 2 added the collector on `PC2`.
-This unified Phase 4 replaces the old cloud-sync idea with a local-network workflow:
+Phase 5 does **not** decide the final model for you. It gives you a reproducible way to compare:
 
-1. `PC2` writes raw market data locally
-2. `PC1` pulls new files from a shared network path on `PC2`
-3. `PC1` validates imported data
-4. `PC1` cleans and transforms imported raw data into feature parquet files
+- multiple feature sets
+- multiple target modes
+- multiple model families
+- multiple hyperparameter variants
 
-This phase does **not** implement autonomous trading, final execution logic, or cloud sync.
+and then inspect the leaderboard before choosing what deserves the next phase.
 
 ## Architecture
 
 ### PC2
 
-- runs IBKR Gateway or TWS
-- runs the market data collector
-- persists operational raw parquet locally under `data/raw/market/`
-- optionally exposes `data/meta/` and `data/logs/` through the same network share
+- runs the collector
+- writes raw parquet under `data/raw/market/`
+- exposes the project or data folder through a LAN share
 
 ### PC1
 
-- mounts or accesses the shared folder from `PC2`
-- imports new files into `imports/from_pc2/`
-- validates imported parquet files
-- builds features into `data/features/`
-
-The intended ownership is:
-
-- `PC2` = origin of truth for collection
-- `PC1` = local working copy for research
+- pulls data from `PC2` into `imports/from_pc2/`
+- validates imports
+- builds configurable feature stores
+- builds labels from those feature stores
+- builds modeling datasets with temporal splits
+- trains multiple model variants
+- evaluates them and writes a leaderboard plus artifacts
 
 ## Project Structure
 
@@ -46,6 +41,8 @@ MicroAlpha-IBKR/
 ├── app.py
 ├── config/
 │   ├── settings.yaml
+│   ├── feature_sets.yaml
+│   ├── modeling.yaml
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
@@ -54,92 +51,85 @@ MicroAlpha-IBKR/
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
-│   ├── raw/
-│   │   └── market/
+│   ├── feature_loader.py
 │   ├── features/
 │   ├── processed/
-│   ├── logs/
+│   │   └── labels/
+│   ├── models/
 │   └── reports/
+│       └── phase5/
+├── features/
+│   ├── definitions.py
+│   ├── registry.py
+│   ├── validation.py
+│   ├── feature_pipeline.py
+│   └── indicators/
+├── labels/
+│   ├── labeling.py
+│   └── dataset_builder.py
+├── models/
+│   ├── config.py
+│   ├── factory.py
+│   ├── evaluation.py
+│   ├── experiments.py
+│   ├── registry.py
+│   ├── inference.py
+│   ├── train_baseline.py
+│   └── train_deep.py
 ├── imports/
 │   └── from_pc2/
-│       ├── raw/
-│       │   └── market/
-│       ├── meta/
-│       ├── logs/
-│       └── transfer_log.jsonl
-├── ingestion/
-│   └── collector.py
-├── features/
-│   └── feature_pipeline.py
-├── monitoring/
-│   ├── healthcheck.py
-│   ├── logging.py
-│   └── data_quality.py
 ├── scripts/
-│   ├── run_collector.py
 │   ├── pull_from_pc2.py
 │   ├── validate_imports.py
 │   ├── build_features.py
-│   ├── dev_sync_and_build.py
-│   └── healthcheck.py
+│   ├── build_labels.py
+│   ├── train_baseline.py
+│   ├── evaluate_baseline.py
+│   ├── compare_model_variants.py
+│   └── run_phase5_experiments.py
 └── tests/
 ```
 
-## Data Layout
+## LAN Data Flow
 
-### Source layout on PC2
+1. `PC2` writes raw parquet locally.
+2. `PC1` reaches the LAN share configured by `PC2_NETWORK_ROOT`.
+3. `PC1` runs `pull-from-pc2`.
+4. Imported parquet lands in `imports/from_pc2/raw/market/`.
+5. `PC1` runs `build-features --feature-set <name>`.
+6. Features are written to `data/features/<feature_set>/YYYY-MM-DD/SYMBOL.parquet`.
+7. `PC1` runs `build-labels`.
+8. Labels are written to `data/processed/labels/<feature_set>/<target_mode>/YYYY-MM-DD/SYMBOL.parquet`.
+9. `PC1` trains and compares model variants.
 
-The collector is expected to write under a local project root on `PC2`:
-
-```text
-data/raw/market/YYYY-MM-DD/SYMBOL/*.parquet
-data/meta/
-data/logs/
-```
-
-### Import layout on PC1
-
-Pulled files are copied into the local research workspace:
-
-```text
-imports/from_pc2/raw/market/YYYY-MM-DD/SYMBOL/*.parquet
-imports/from_pc2/meta/
-imports/from_pc2/logs/
-imports/from_pc2/transfer_log.jsonl
-```
-
-### Feature layout on PC1
-
-```text
-data/features/YYYY-MM-DD/SYMBOL.parquet
-```
+`PC2` remains the operational source of truth for collection.  
+`PC1` remains the research and experiment node.
 
 ## Network Share Configuration
 
-This implementation assumes `PC1` can access a shared filesystem path from `PC2`.
-The application does **not** mount SMB shares itself; it works with an already reachable path.
+The repo does not mount SMB or UNC shares for you. `PC1` must already be able to access the filesystem exported by `PC2`.
 
 Examples:
 
-- Windows UNC path:
+- Windows UNC:
 
 ```text
 \\PC2\microalpha
 ```
 
-- Mounted SMB share on Linux or WSL:
+- Linux or WSL mounted share:
 
 ```text
 /mnt/pc2/microalpha
 ```
 
-- Mounted network drive letter from Windows exposed into WSL:
+- Mounted Windows drive visible in WSL:
 
 ```text
 /mnt/z/microalpha
 ```
 
-Set that location through `PC2_NETWORK_ROOT`.
+Set that root through `PC2_NETWORK_ROOT`.
 
 ## Installation
 
@@ -151,237 +141,387 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Configuration
+## Phase 5 Architecture
 
-Inspect the merged configuration:
+Phase 5 is organized in these blocks:
 
-```bash
-python app.py show-config
-python app.py --environment development show-config
-python app.py --environment deploy show-config
-```
+1. feature / indicator system
+2. labeling / target system
+3. dataset building
+4. model factory
+5. variant and hyperparameter search
+6. evaluation and leaderboard
+7. model registry and artifacts
+8. simple execution commands
 
-The most important LAN settings are:
+### Feature Registry
 
-- `PC2_NETWORK_ROOT`
-- `IMPORT_ROOT`
-- `IMPORT_MARKET_DIR`
-- `LAN_INCLUDE_RAW`
-- `LAN_INCLUDE_META`
-- `LAN_INCLUDE_LOGS`
-- `LAN_DRY_RUN`
-- `LAN_OVERWRITE_POLICY`
-- `LAN_VALIDATE_PARQUET`
-- `LAN_ALLOWED_SYMBOLS`
+The feature registry lives in `features/registry.py`.
 
-## Main Commands
+Each indicator declares:
 
-### PC2 collector
+- canonical name
+- family
+- required dependency groups
+- configurable parameters
+- output columns
+- output type
+- calculator implementation
 
-Run on `PC2`:
+The registry is dependency-aware. If a dataset does not have usable columns for an indicator, the indicator is skipped with an explicit reason instead of failing ambiguously.
 
-```bash
-python app.py --environment deploy collect --once
-python app.py --environment deploy collect --max-cycles 120
-```
+### Indicator Families
 
-### Pull files from PC2 to PC1
+#### Trend
 
-Run on `PC1`:
+- `sma`
+- `ema`
+- `moving_average_distance`
+- `moving_average_slope`
+- `ma_crossover_short_long`
+- `macd_line`
+- `macd_signal`
+- `macd_histogram`
+- `adx`
+- `plus_di`
+- `minus_di`
 
-```bash
-python app.py --environment development pull-from-pc2
-python app.py --environment development pull-from-pc2 --symbols SPY QQQ
-python app.py --environment development pull-from-pc2 --start-date 2026-04-14 --end-date 2026-04-16
-python app.py --environment development pull-from-pc2 --dry-run
-```
+#### Momentum
 
-Wrapper script:
+- `rsi`
+- `roc`
+- `momentum_simple`
+- `stochastic_k`
+- `stochastic_d`
+- `williams_r`
+- `cci`
 
-```bash
-python scripts/pull_from_pc2.py --environment development
-```
+#### Volatility
 
-### Validate imports on PC1
+- `true_range`
+- `atr`
+- `rolling_volatility`
+- `rolling_std_returns`
+- `bollinger_mid`
+- `bollinger_upper`
+- `bollinger_lower`
+- `bollinger_bandwidth`
+- `zscore_price`
+- `orb_width`
 
-```bash
-python app.py --environment development validate-imports
-python app.py --environment development validate-imports --symbols SPY
-```
+#### Volume / Flow
 
-Wrapper script:
+- `rolling_volume_mean`
+- `relative_volume`
+- `vwap`
+- `distance_to_vwap`
+- `vwap_slope`
+- `obv`
+- `volume_spike_flag`
+- `accumulation_distribution`
+- `mfi`
 
-```bash
-python scripts/validate_imports.py --environment development
-```
-
-### Build features on PC1
-
-By default this reads from `imports/from_pc2/raw/market/`.
-
-```bash
-python app.py --environment development build-features
-python app.py --environment development build-features --symbols SPY QQQ
-python app.py --environment development build-features --start-date 2026-04-14 --end-date 2026-04-16
-```
-
-Wrapper script:
-
-```bash
-python scripts/build_features.py --environment development
-```
-
-### One-command development flow
-
-This is the main convenience command for `PC1`:
-
-```bash
-python app.py --environment development dev-sync-and-build
-python app.py --environment development dev-sync-and-build --symbols SPY
-python app.py --environment development dev-sync-and-build --dry-run
-```
-
-Wrapper script:
-
-```bash
-python scripts/dev_sync_and_build.py --environment development
-```
-
-### Healthcheck
-
-```bash
-python app.py healthcheck --skip-broker
-python app.py --environment deploy healthcheck
-```
-
-## Transfer Tracking
-
-Every pull from `PC2` leaves local traceability on `PC1`:
-
-- incremental event log:
-
-```text
-imports/from_pc2/transfer_log.jsonl
-```
-
-- per-run JSON reports:
-
-```text
-data/reports/lan_sync/pull_from_pc2_*.json
-```
-
-Each record includes:
-
-- source path
-- destination path
-- category
-- file size
-- modification timestamp
-- transfer status
-- validation result
-
-This keeps a simple but useful history of what was detected, copied, skipped, or failed.
-
-## Import Validation
-
-`validate-imports` checks:
-
-- file readability
-- required columns
-- obvious duplicate rows
-- missing timestamps
-- critical null rows
-- `bid > ask`
-- negative or absurd spreads
-- large gaps
-- rows outside regular hours
-
-Validation reports are written into `data/reports/`.
-
-## Feature Pipeline
-
-The feature pipeline generates four groups of features.
-
-### ORB features
-
-- `orb_high`
-- `orb_low`
-- `orb_range_width`
-- `orb_range_width_bps`
-- `orb_relative_price_position`
-- `breakout_distance`
-- `breakout_distance_bps`
-- `orb_range_complete`
-- `minutes_since_open`
-
-### Microstructure features
+#### Microstructure
 
 - `spread`
 - `spread_bps`
 - `mid_price`
-- `micro_price`
-- `bid_ask_imbalance`
-- `rolling_spread_mean_bps`
-- `rolling_spread_std_bps`
-- `rolling_imbalance_mean`
-- `rolling_imbalance_std`
+- `weighted_mid_price`
+- `imbalance`
+- `rolling_imbalance`
+- `delta_imbalance`
+- `total_depth`
+- `depth_ratio`
+- `microprice_proxy`
 
-### Intraday features
+#### Intraday Structure
 
-- `return_1_bps`
-- `return_short_bps`
-- `return_medium_bps`
-- `rolling_volatility_short_bps`
-- `rolling_volatility_medium_bps`
-- `rolling_volatility_long_bps`
-- `vwap_approx`
-- `distance_to_vwap_bps`
-- `relative_volume`
-- `time_of_day_sin`
-- `time_of_day_cos`
+- `minute_of_day`
+- `seconds_since_open`
+- `seconds_to_close`
+- `opening_session_flag`
+- `midday_flag`
+- `closing_session_flag`
+- `day_of_week`
+- `intraday_volume_percentile`
+- `intraday_spread_percentile`
 
-### Cost proxy features
+### Feature Sets
 
-- `estimated_cost_bps`
-- `spread_proxy_bps`
-- `slippage_proxy_bps`
+Defined in `config/feature_sets.yaml`:
 
-## Windows / SMB Notes
+- `core_price_only`
+- `core_intraday`
+- `technical_basic`
+- `technical_plus_volume`
+- `microstructure_core`
+- `hybrid_intraday`
+- `full_experimental`
 
-Typical setup for a Windows-based `PC2`:
+Each feature set declares:
 
-1. share the project folder or a data subfolder from Windows
-2. grant read access to the user that will connect from `PC1`
-3. from `PC1`, use either:
-   - the UNC path directly if the runtime supports it
-   - a mounted share path
-   - a mapped network drive available inside WSL as `/mnt/<drive>/...`
+- families
+- explicit indicators
+- optional parameter overrides
+- minimum columns
 
-Example:
+### Target Modes
 
-```dotenv
-PC2_NETWORK_ROOT=/mnt/z/microalpha
+Defined in `config/modeling.yaml`:
+
+- `classification_binary`
+  - binary continuation target from future net return vs threshold
+- `regression_point`
+  - future return in bps
+- `ordinal_classification`
+  - ordered return bins
+- `distribution_bins`
+  - discrete return buckets as a distribution-oriented classification target
+- `quantile_regression`
+  - continuous future return target prepared for multi-quantile regressors
+
+The pipeline separates `X` and `y` cleanly:
+
+- features only use present and past information
+- labels use future information only in target construction
+- the dataset builder excludes `target_*`, `future_*`, and other leakage-prone columns from feature selection
+
+### Supported Models
+
+Built through `models/factory.py`.
+
+#### Classification / Ordinal / Distribution Bins
+
+- `logistic_regression`
+- `random_forest_classifier`
+- `hist_gradient_boosting_classifier`
+- `xgboost_classifier` if installed
+- `lightgbm_classifier` if installed
+
+#### Point Regression
+
+- `ridge_regression`
+- `random_forest_regressor`
+- `hist_gradient_boosting_regressor`
+- `xgboost_regressor` if installed
+- `lightgbm_regressor` if installed
+
+#### Distribution / Quantile-Oriented
+
+- `quantile_gradient_boosting`
+  - trains multiple quantile regressors, for example `q10 / q50 / q90`
+- `distribution_bins`
+  - discrete return buckets through multiclass classification
+
+### Variant Search
+
+The search configuration lives in `config/modeling.yaml`.
+
+It controls:
+
+- temporal split ratios
+- minimum sample thresholds
+- target definitions
+- model parameter grids
+- experiment profiles
+
+The search is intentionally simple:
+
+- practical grids
+- explicit combinations
+- reproducible runs
+- no expensive tuning machinery
+
+### Temporal Evaluation
+
+The main split is temporal:
+
+- `train`
+- `validation`
+- `test`
+
+No random split is used as the primary validation path.
+
+### Metrics
+
+#### Technical
+
+Classification and ordinal:
+
+- accuracy
+- precision macro
+- recall macro
+- F1 macro
+- weighted F1
+- ROC AUC when applicable
+- confusion matrix
+
+Regression:
+
+- MAE
+- RMSE
+- directional accuracy
+
+Quantile / distribution-oriented:
+
+- pinball loss
+- interval coverage
+- mean interval width
+
+#### Preliminary Economic
+
+- top-decile mean future return
+- top-decile mean net return
+- bottom-decile mean future return
+- score spread between top and bottom deciles
+- top-signal hit rate
+- score buckets with mean future return
+
+## Core Commands
+
+### LAN and Features
+
+```bash
+python app.py pull-from-pc2
+python app.py validate-imports
+python app.py list-feature-sets
+python app.py inspect-feature-dependencies --feature-set hybrid_intraday
+python app.py build-features --feature-set hybrid_intraday
+python app.py validate-features --feature-set hybrid_intraday
 ```
 
-where `Z:` is a mapped drive pointing to:
+### Labels and Single-Run Modeling
+
+```bash
+python app.py build-labels --feature-set hybrid_intraday --target-mode classification_binary
+python app.py train-baseline --feature-set hybrid_intraday --target-mode classification_binary --model logistic_regression
+python app.py evaluate-baseline
+```
+
+### Comparison and Main Phase 5 Runner
+
+```bash
+python app.py compare-model-variants --profile default
+python app.py run-phase5-experiments --profile default
+```
+
+### Examples
+
+Run one distribution-oriented comparison:
+
+```bash
+python app.py compare-model-variants \
+  --feature-sets hybrid_intraday \
+  --target-modes quantile_regression \
+  --models quantile_gradient_boosting \
+  --symbols SPY
+```
+
+Run the main experiment command with explicit scope:
+
+```bash
+python app.py run-phase5-experiments \
+  --feature-sets hybrid_intraday technical_plus_volume \
+  --target-modes classification_binary regression_point quantile_regression \
+  --models logistic_regression ridge_regression quantile_gradient_boosting \
+  --symbols SPY QQQ
+```
+
+Reuse an existing feature store and skip feature regeneration:
+
+```bash
+python app.py run-phase5-experiments \
+  --feature-sets hybrid_intraday \
+  --target-modes classification_binary \
+  --models logistic_regression \
+  --skip-feature-build
+```
+
+## Leaderboard
+
+Every comparison run writes a leaderboard under `data/reports/phase5/`.
+
+Outputs include:
+
+- `leaderboard_*.json`
+- `leaderboard_*.csv`
+- `leaderboard_*.parquet`
+
+Each row contains:
+
+- `run_id`
+- timestamp
+- model name
+- target mode
+- feature set
+- hyperparameters
+- split config
+- symbols
+- train / validation / test ranges
+- validation metrics
+- test metrics
+- artifact path
+- ranking score
+
+Interpretation:
+
+- use the leaderboard to compare runs
+- do **not** treat rank 1 as “the final production model”
+- check both technical metrics and economic separation
+- compare the same model across feature sets
+- compare different model families on the same target mode
+
+## Artifacts and Registry
+
+Each run writes a dedicated artifact directory under `data/models/`:
 
 ```text
-\\PC2\microalpha
+data/models/run_<timestamp>_<model>_<feature_set>_<target>_<id>/
+  model.joblib
+  preprocessing.joblib
+  feature_columns.json
+  metrics.json
+  config_snapshot.json
+  training_metadata.json
+  target_config.json
+  leaderboard_row.json
+  evaluation.json
 ```
+
+The registry keeps:
+
+- legacy `baseline` and `deep` entries for old flows
+- `phase5_runs` for the new flexible modeling system
+
+## Validations and Safety Checks
+
+The pipeline fails clearly when:
+
+- the selected feature set cannot be built
+- required feature store files are missing
+- labels cannot be built because no valid price proxy exists
+- feature columns become empty, constant, or excessively sparse
+- the target is missing or invalid
+- the temporal split is too small or empty
+- the selected model is incompatible with the target mode
+- a model artifact would be saved without required metadata
 
 ## Limitations
 
-- the application assumes the network share is already reachable
-- it does not mount SMB shares or manage credentials
-- transfer change detection is based on path, size, and modified time, not content hashing
-- import validation is basic but practical; it is not a full market data QA framework
-- feature generation is offline research preparation, not online inference
+- this phase does not implement execution, risk, or paper trading
+- no walk-forward engine beyond the current temporal split
+- no calibration layer yet for classification probabilities
+- no final model selection policy
+- no deployment-time inference bridge for the new phase 5 artifacts yet
+- optional `xgboost` and `lightgbm` support only works if those packages are installed
 
-## Next Phase
+## Phase 6
 
-The next logical phase is:
+The next phase should build on this by adding:
 
-- labels and dataset generation from `data/features/`
-- temporal training / validation splits
-- baseline model training and evaluation
-- later, alignment between offline features and online inference
+- stronger walk-forward validation
+- selection policy for promoted models
+- inference bridge from phase 5 artifacts to operational PC2 workflows
+- data drift checks
+- model monitoring
+- decision and risk engines

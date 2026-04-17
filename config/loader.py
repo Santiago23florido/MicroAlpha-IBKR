@@ -205,6 +205,8 @@ class FeaturePipelineSettings:
     volume_window: int = 30
     label_horizon_rows: int = 1
     train_split_ratio: float = 0.8
+    default_feature_set: str = "hybrid_intraday"
+    validation_max_nan_ratio: float = 0.35
 
 
 @dataclass(frozen=True)
@@ -834,6 +836,15 @@ def load_settings(
                 runtime_env,
                 "FEATURE_TRAIN_SPLIT_RATIO",
                 float(feature_pipeline_defaults.get("train_split_ratio", 0.8)),
+            ),
+            default_feature_set=runtime_env.get(
+                "FEATURE_SET",
+                str(feature_pipeline_defaults.get("default_feature_set", "hybrid_intraday")),
+            ),
+            validation_max_nan_ratio=_parse_float(
+                runtime_env,
+                "FEATURE_VALIDATION_MAX_NAN_RATIO",
+                float(feature_pipeline_defaults.get("validation_max_nan_ratio", 0.35)),
             ),
         ),
         lan_sync=LanSyncSettings(
