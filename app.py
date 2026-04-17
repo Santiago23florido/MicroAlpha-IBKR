@@ -25,6 +25,13 @@ from features.feature_pipeline import (
 from features.validation import validate_feature_store
 from ingestion.collector import collect_market_data
 from ingestion.ibkr_client import build_collector_ib_client
+from labels.labeling import build_labels
+from models.experiments import (
+    compare_model_variants,
+    evaluate_baseline_variant,
+    run_phase5_experiments,
+    train_baseline_variant,
+)
 from models.train_baseline import train_baseline_model
 from models.train_deep import train_deep_model
 from monitoring.data_quality import validate_imports
@@ -96,6 +103,62 @@ def build_parser() -> argparse.ArgumentParser:
     build_features_parser.add_argument("--output-root", help="Override the processed feature output root.")
     build_features_parser.add_argument("--feature-set", help="Feature set name declared in config/feature_sets.yaml.")
 
+    build_labels_parser = subparsers.add_parser(
+        "build-labels",
+        help="Generate flexible labels/targets from a selected feature store and persist them under data/processed/labels.",
+    )
+    build_labels_parser.add_argument("--feature-set", help="Feature set name declared in config/feature_sets.yaml.")
+    build_labels_parser.add_argument("--target-mode", default="classification_binary", help="Target mode declared in config/modeling.yaml.")
+    build_labels_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    build_labels_parser.add_argument("--start-date", help="Filter features from this session date (YYYY-MM-DD).")
+    build_labels_parser.add_argument("--end-date", help="Filter features until this session date (YYYY-MM-DD).")
+    build_labels_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    build_labels_parser.add_argument("--output-root", help="Override the label parquet output root.")
+
+    train_baseline_parser = subparsers.add_parser(
+        "train-baseline",
+        help="Train one configurable phase 5 baseline/model variant from labeled feature data.",
+    )
+    train_baseline_parser.add_argument("--feature-set", help="Feature set name declared in config/feature_sets.yaml.")
+    train_baseline_parser.add_argument("--target-mode", default="classification_binary", help="Target mode declared in config/modeling.yaml.")
+    train_baseline_parser.add_argument("--model", default="logistic_regression", help="Model name declared in the phase 5 model factory.")
+    train_baseline_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    train_baseline_parser.add_argument("--start-date", help="Filter data from this session date (YYYY-MM-DD).")
+    train_baseline_parser.add_argument("--end-date", help="Filter data until this session date (YYYY-MM-DD).")
+
+    evaluate_baseline_parser = subparsers.add_parser(
+        "evaluate-baseline",
+        help="Reload and evaluate a previously trained phase 5 run using its stored metadata.",
+    )
+    evaluate_baseline_parser.add_argument("--run-id", help="Registered phase5 run id. Defaults to the latest run.")
+    evaluate_baseline_parser.add_argument("--artifact-dir", help="Resolve the run from its artifact directory instead of run id.")
+
+    compare_variants_parser = subparsers.add_parser(
+        "compare-model-variants",
+        help="Build labels if needed, train multiple model/target/feature-set combinations, and emit a leaderboard.",
+    )
+    compare_variants_parser.add_argument("--profile", default="default", help="Experiment profile declared in config/modeling.yaml.")
+    compare_variants_parser.add_argument("--feature-sets", nargs="+", help="Optional explicit feature sets.")
+    compare_variants_parser.add_argument("--target-modes", nargs="+", help="Optional explicit target modes.")
+    compare_variants_parser.add_argument("--models", nargs="+", help="Optional explicit model names.")
+    compare_variants_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    compare_variants_parser.add_argument("--start-date", help="Filter data from this session date (YYYY-MM-DD).")
+    compare_variants_parser.add_argument("--end-date", help="Filter data until this session date (YYYY-MM-DD).")
+    compare_variants_parser.add_argument("--max-combinations", type=int, help="Hard cap on attempted model combinations.")
+
+    run_phase5_parser = subparsers.add_parser(
+        "run-phase5-experiments",
+        help="Main phase 5 command: build features, build labels, train/evaluate variants, and write a leaderboard.",
+    )
+    run_phase5_parser.add_argument("--profile", default="default", help="Experiment profile declared in config/modeling.yaml.")
+    run_phase5_parser.add_argument("--feature-sets", nargs="+", help="Optional explicit feature sets.")
+    run_phase5_parser.add_argument("--target-modes", nargs="+", help="Optional explicit target modes.")
+    run_phase5_parser.add_argument("--models", nargs="+", help="Optional explicit model names.")
+    run_phase5_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    run_phase5_parser.add_argument("--start-date", help="Filter data from this session date (YYYY-MM-DD).")
+    run_phase5_parser.add_argument("--end-date", help="Filter data until this session date (YYYY-MM-DD).")
+    run_phase5_parser.add_argument("--skip-feature-build", action="store_true", help="Reuse existing feature stores instead of rebuilding them.")
+
     subparsers.add_parser(
         "list-feature-sets",
         help="List configured feature sets, their families, and the configured default.",
@@ -116,6 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate generated feature parquet files for NaNs, constants, infinities, and duplicate columns.",
     )
     validate_features_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    validate_features_parser.add_argument("--feature-set", help="Optional feature set partition to validate.")
     validate_features_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
     validate_features_parser.add_argument("--start-date", help="Validate features on or after this session date (YYYY-MM-DD).")
     validate_features_parser.add_argument("--end-date", help="Validate features on or before this session date (YYYY-MM-DD).")
@@ -310,11 +374,83 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "build-labels":
+            print_result(
+                build_labels(
+                    settings,
+                    feature_set_name=args.feature_set or settings.feature_pipeline.default_feature_set,
+                    target_mode=args.target_mode,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    feature_root=args.feature_root,
+                    output_root=args.output_root,
+                )
+            )
+            return 0
+
+        if args.command == "train-baseline":
+            print_result(
+                train_baseline_variant(
+                    settings,
+                    feature_set_name=args.feature_set or settings.feature_pipeline.default_feature_set,
+                    target_mode=args.target_mode,
+                    model_name=args.model,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                )
+            )
+            return 0
+
+        if args.command == "evaluate-baseline":
+            print_result(
+                evaluate_baseline_variant(
+                    settings,
+                    run_id=args.run_id,
+                    artifact_dir=args.artifact_dir,
+                )
+            )
+            return 0
+
+        if args.command == "compare-model-variants":
+            print_result(
+                compare_model_variants(
+                    settings,
+                    feature_sets=args.feature_sets,
+                    target_modes=args.target_modes,
+                    models=args.models,
+                    profile_name=args.profile,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    max_combinations=args.max_combinations,
+                )
+            )
+            return 0
+
+        if args.command == "run-phase5-experiments":
+            print_result(
+                run_phase5_experiments(
+                    settings,
+                    feature_sets=args.feature_sets,
+                    target_modes=args.target_modes,
+                    models=args.models,
+                    profile_name=args.profile,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    build_features_first=not args.skip_feature_build,
+                )
+            )
+            return 0
+
         if args.command == "validate-features":
             print_result(
                 validate_feature_store(
                     settings,
                     feature_root=args.feature_root or settings.paths.feature_dir,
+                    feature_set_name=args.feature_set,
                     symbols=args.symbols,
                     start_date=args.start_date,
                     end_date=args.end_date,
