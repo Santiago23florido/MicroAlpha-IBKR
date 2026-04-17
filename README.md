@@ -1,20 +1,20 @@
-# MicroAlpha-IBKR Phase 5A: Flexible Feature Architecture on Top of the LAN Pipeline
+# MicroAlpha-IBKR Phase 5: Flexible Modeling on Top of the LAN Research Pipeline
 
 ## Purpose
 
-The repository keeps the same dual-machine LAN architecture:
+This repository now supports a full Phase 5 research workflow on `PC1` while keeping the dual-machine architecture intact:
 
-- `PC2`: IBKR collector and operational raw data source
-- `PC1`: research workstation for imports, validation, feature generation, and later model comparison
+- `PC2`: collector and operational raw data source
+- `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, and experiment tracking
 
-This subsection of Phase 5 does **not** implement final modeling, execution, or decision logic.
-It only prepares the feature layer so the project can:
+Phase 5 does **not** decide the final model for you. It gives you a reproducible way to compare:
 
-- define indicator families centrally
-- enable or disable feature sets by configuration
-- detect dependency compatibility against the current dataset
-- skip incompatible indicators with explicit reasons
-- rebuild comparable feature variants when the dataset changes
+- multiple feature sets
+- multiple target modes
+- multiple model families
+- multiple hyperparameter variants
+
+and then inspect the leaderboard before choosing what deserves the next phase.
 
 ## Architecture
 
@@ -22,15 +22,17 @@ It only prepares the feature layer so the project can:
 
 - runs the collector
 - writes raw parquet under `data/raw/market/`
-- exposes that data through a LAN share
+- exposes the project or data folder through a LAN share
 
 ### PC1
 
-- pulls data from the LAN share into `imports/from_pc2/`
+- pulls data from `PC2` into `imports/from_pc2/`
 - validates imports
-- cleans raw data
-- applies a configurable feature set through the feature registry
-- writes feature parquet files under `data/features/`
+- builds configurable feature stores
+- builds labels from those feature stores
+- builds modeling datasets with temporal splits
+- trains multiple model variants
+- evaluates them and writes a leaderboard plus artifacts
 
 ## Project Structure
 
@@ -40,6 +42,7 @@ MicroAlpha-IBKR/
 ├── config/
 │   ├── settings.yaml
 │   ├── feature_sets.yaml
+│   ├── modeling.yaml
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
@@ -48,77 +51,85 @@ MicroAlpha-IBKR/
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
+│   ├── feature_loader.py
 │   ├── features/
+│   ├── processed/
+│   │   └── labels/
+│   ├── models/
 │   └── reports/
+│       └── phase5/
 ├── features/
 │   ├── definitions.py
 │   ├── registry.py
 │   ├── validation.py
 │   ├── feature_pipeline.py
 │   └── indicators/
-│       ├── trend.py
-│       ├── momentum.py
-│       ├── volatility.py
-│       ├── volume_flow.py
-│       ├── microstructure.py
-│       └── intraday.py
+├── labels/
+│   ├── labeling.py
+│   └── dataset_builder.py
+├── models/
+│   ├── config.py
+│   ├── factory.py
+│   ├── evaluation.py
+│   ├── experiments.py
+│   ├── registry.py
+│   ├── inference.py
+│   ├── train_baseline.py
+│   └── train_deep.py
 ├── imports/
 │   └── from_pc2/
-├── monitoring/
-│   ├── healthcheck.py
-│   ├── logging.py
-│   └── data_quality.py
 ├── scripts/
 │   ├── pull_from_pc2.py
 │   ├── validate_imports.py
 │   ├── build_features.py
-│   ├── dev_sync_and_build.py
-│   ├── list_feature_sets.py
-│   ├── inspect_feature_dependencies.py
-│   └── validate_features.py
+│   ├── build_labels.py
+│   ├── train_baseline.py
+│   ├── evaluate_baseline.py
+│   ├── compare_model_variants.py
+│   └── run_phase5_experiments.py
 └── tests/
 ```
 
 ## LAN Data Flow
 
-The operational flow is still LAN-first.
-
-1. `PC2` writes raw market parquet locally.
-2. `PC1` mounts or reaches the shared folder from `PC2`.
+1. `PC2` writes raw parquet locally.
+2. `PC1` reaches the LAN share configured by `PC2_NETWORK_ROOT`.
 3. `PC1` runs `pull-from-pc2`.
 4. Imported parquet lands in `imports/from_pc2/raw/market/`.
 5. `PC1` runs `build-features --feature-set <name>`.
-6. Features are written to `data/features/YYYY-MM-DD/SYMBOL.parquet`.
+6. Features are written to `data/features/<feature_set>/YYYY-MM-DD/SYMBOL.parquet`.
+7. `PC1` runs `build-labels`.
+8. Labels are written to `data/processed/labels/<feature_set>/<target_mode>/YYYY-MM-DD/SYMBOL.parquet`.
+9. `PC1` trains and compares model variants.
 
-`PC2` remains the operational source of truth for collection.
-`PC1` keeps the working copy for research.
+`PC2` remains the operational source of truth for collection.  
+`PC1` remains the research and experiment node.
 
 ## Network Share Configuration
 
-The code assumes `PC1` can already reach the filesystem exported by `PC2`.
-It does **not** mount SMB shares itself.
+The repo does not mount SMB or UNC shares for you. `PC1` must already be able to access the filesystem exported by `PC2`.
 
 Examples:
 
-- Windows UNC path:
+- Windows UNC:
 
 ```text
 \\PC2\microalpha
 ```
 
-- Mounted share in Linux or WSL:
+- Linux or WSL mounted share:
 
 ```text
 /mnt/pc2/microalpha
 ```
 
-- Mounted Windows drive visible from WSL:
+- Mounted Windows drive visible in WSL:
 
 ```text
 /mnt/z/microalpha
 ```
 
-Configure that path through `PC2_NETWORK_ROOT`.
+Set that root through `PC2_NETWORK_ROOT`.
 
 ## Installation
 
@@ -130,40 +141,20 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Configuration
+## Phase 5 Architecture
 
-Inspect the merged configuration:
+Phase 5 is organized in these blocks:
 
-```bash
-python app.py show-config
-python app.py --environment development show-config
-python app.py --environment deploy show-config
-```
+1. feature / indicator system
+2. labeling / target system
+3. dataset building
+4. model factory
+5. variant and hyperparameter search
+6. evaluation and leaderboard
+7. model registry and artifacts
+8. simple execution commands
 
-Most important LAN settings:
-
-- `PC2_NETWORK_ROOT`
-- `IMPORT_ROOT`
-- `IMPORT_MARKET_DIR`
-- `LAN_INCLUDE_RAW`
-- `LAN_INCLUDE_META`
-- `LAN_INCLUDE_LOGS`
-- `LAN_DRY_RUN`
-- `LAN_OVERWRITE_POLICY`
-- `LAN_VALIDATE_PARQUET`
-- `LAN_ALLOWED_SYMBOLS`
-
-Most important feature-architecture settings:
-
-- `FEATURE_SET`
-- `FEATURE_ROLLING_SHORT_WINDOW`
-- `FEATURE_ROLLING_MEDIUM_WINDOW`
-- `FEATURE_ROLLING_LONG_WINDOW`
-- `FEATURE_VWAP_WINDOW`
-- `FEATURE_VOLUME_WINDOW`
-- `FEATURE_VALIDATION_MAX_NAN_RATIO`
-
-## Feature Registry
+### Feature Registry
 
 The feature registry lives in `features/registry.py`.
 
@@ -172,25 +163,16 @@ Each indicator declares:
 - canonical name
 - family
 - required dependency groups
-- default parameters
+- configurable parameters
 - output columns
 - output type
 - calculator implementation
 
-The registry does not assume the dataset always exposes the same columns.
-Instead it checks whether each indicator has at least one usable column for every dependency group.
+The registry is dependency-aware. If a dataset does not have usable columns for an indicator, the indicator is skipped with an explicit reason instead of failing ambiguously.
 
-Example:
+### Indicator Families
 
-- `rsi` needs a usable price proxy
-- `vwap` needs price proxy plus volume
-- `microprice_proxy` needs `bid`, `ask`, `bid_size`, `ask_size`
-
-If those dependencies are not present with usable data, the indicator is omitted and the reason is recorded.
-
-## Indicator Families
-
-### Trend
+#### Trend
 
 - `sma`
 - `ema`
@@ -204,7 +186,7 @@ If those dependencies are not present with usable data, the indicator is omitted
 - `plus_di`
 - `minus_di`
 
-### Momentum
+#### Momentum
 
 - `rsi`
 - `roc`
@@ -214,7 +196,7 @@ If those dependencies are not present with usable data, the indicator is omitted
 - `williams_r`
 - `cci`
 
-### Volatility
+#### Volatility
 
 - `true_range`
 - `atr`
@@ -227,7 +209,7 @@ If those dependencies are not present with usable data, the indicator is omitted
 - `zscore_price`
 - `orb_width`
 
-### Volume / Flow
+#### Volume / Flow
 
 - `rolling_volume_mean`
 - `relative_volume`
@@ -239,7 +221,7 @@ If those dependencies are not present with usable data, the indicator is omitted
 - `accumulation_distribution`
 - `mfi`
 
-### Microstructure
+#### Microstructure
 
 - `spread`
 - `spread_bps`
@@ -252,7 +234,7 @@ If those dependencies are not present with usable data, the indicator is omitted
 - `depth_ratio`
 - `microprice_proxy`
 
-### Intraday Structure
+#### Intraday Structure
 
 - `minute_of_day`
 - `seconds_since_open`
@@ -264,13 +246,9 @@ If those dependencies are not present with usable data, the indicator is omitted
 - `intraday_volume_percentile`
 - `intraday_spread_percentile`
 
-The pipeline also keeps a small set of compatibility features such as `return_1_bps`, `return_short_bps`, `return_medium_bps`, `estimated_cost_bps`, `spread_proxy_bps`, and `slippage_proxy_bps`.
+### Feature Sets
 
-## Feature Sets
-
-Feature sets are declared centrally in `config/feature_sets.yaml`.
-
-Available sets:
+Defined in `config/feature_sets.yaml`:
 
 - `core_price_only`
 - `core_intraday`
@@ -280,158 +258,270 @@ Available sets:
 - `hybrid_intraday`
 - `full_experimental`
 
-Each set declares:
+Each feature set declares:
 
-- description
 - families
 - explicit indicators
-- parameter overrides when needed
-- minimum expected columns
+- optional parameter overrides
+- minimum columns
 
-This lets you compare later:
+### Target Modes
 
-- same model with different feature sets
-- different models on the same feature set
+Defined in `config/modeling.yaml`:
 
-without rewriting the build pipeline.
+- `classification_binary`
+  - binary continuation target from future net return vs threshold
+- `regression_point`
+  - future return in bps
+- `ordinal_classification`
+  - ordered return bins
+- `distribution_bins`
+  - discrete return buckets as a distribution-oriented classification target
+- `quantile_regression`
+  - continuous future return target prepared for multi-quantile regressors
 
-## Main Commands
+The pipeline separates `X` and `y` cleanly:
 
-### PC2 collector
+- features only use present and past information
+- labels use future information only in target construction
+- the dataset builder excludes `target_*`, `future_*`, and other leakage-prone columns from feature selection
 
-Run on `PC2`:
+### Supported Models
+
+Built through `models/factory.py`.
+
+#### Classification / Ordinal / Distribution Bins
+
+- `logistic_regression`
+- `random_forest_classifier`
+- `hist_gradient_boosting_classifier`
+- `xgboost_classifier` if installed
+- `lightgbm_classifier` if installed
+
+#### Point Regression
+
+- `ridge_regression`
+- `random_forest_regressor`
+- `hist_gradient_boosting_regressor`
+- `xgboost_regressor` if installed
+- `lightgbm_regressor` if installed
+
+#### Distribution / Quantile-Oriented
+
+- `quantile_gradient_boosting`
+  - trains multiple quantile regressors, for example `q10 / q50 / q90`
+- `distribution_bins`
+  - discrete return buckets through multiclass classification
+
+### Variant Search
+
+The search configuration lives in `config/modeling.yaml`.
+
+It controls:
+
+- temporal split ratios
+- minimum sample thresholds
+- target definitions
+- model parameter grids
+- experiment profiles
+
+The search is intentionally simple:
+
+- practical grids
+- explicit combinations
+- reproducible runs
+- no expensive tuning machinery
+
+### Temporal Evaluation
+
+The main split is temporal:
+
+- `train`
+- `validation`
+- `test`
+
+No random split is used as the primary validation path.
+
+### Metrics
+
+#### Technical
+
+Classification and ordinal:
+
+- accuracy
+- precision macro
+- recall macro
+- F1 macro
+- weighted F1
+- ROC AUC when applicable
+- confusion matrix
+
+Regression:
+
+- MAE
+- RMSE
+- directional accuracy
+
+Quantile / distribution-oriented:
+
+- pinball loss
+- interval coverage
+- mean interval width
+
+#### Preliminary Economic
+
+- top-decile mean future return
+- top-decile mean net return
+- bottom-decile mean future return
+- score spread between top and bottom deciles
+- top-signal hit rate
+- score buckets with mean future return
+
+## Core Commands
+
+### LAN and Features
 
 ```bash
-python app.py --environment deploy collect --once
-python app.py --environment deploy collect --max-cycles 120
-```
-
-### Pull files from PC2 to PC1
-
-Run on `PC1`:
-
-```bash
-python app.py --environment development pull-from-pc2
-python app.py --environment development pull-from-pc2 --symbols SPY QQQ
-python app.py --environment development pull-from-pc2 --start-date 2026-04-14 --end-date 2026-04-16
-python app.py --environment development pull-from-pc2 --dry-run
-```
-
-### Validate imports
-
-```bash
-python app.py --environment development validate-imports
-python app.py --environment development validate-imports --symbols SPY
-```
-
-### List feature sets
-
-```bash
+python app.py pull-from-pc2
+python app.py validate-imports
 python app.py list-feature-sets
-python scripts/list_feature_sets.py --environment development
-```
-
-### Inspect feature dependencies
-
-```bash
 python app.py inspect-feature-dependencies --feature-set hybrid_intraday
-python app.py inspect-feature-dependencies --feature-set microstructure_core --symbols SPY
-python scripts/inspect_feature_dependencies.py --environment development --feature-set technical_plus_volume
-```
-
-### Build features with a selected set
-
-```bash
 python app.py build-features --feature-set hybrid_intraday
-python app.py build-features --feature-set technical_basic --symbols SPY QQQ
-python app.py build-features --feature-set microstructure_core --start-date 2026-04-14 --end-date 2026-04-16
-python scripts/build_features.py --environment development --feature-set hybrid_intraday
+python app.py validate-features --feature-set hybrid_intraday
 ```
 
-### Validate generated features
+### Labels and Single-Run Modeling
 
 ```bash
-python app.py validate-features
-python app.py validate-features --symbols SPY
-python scripts/validate_features.py --environment development
+python app.py build-labels --feature-set hybrid_intraday --target-mode classification_binary
+python app.py train-baseline --feature-set hybrid_intraday --target-mode classification_binary --model logistic_regression
+python app.py evaluate-baseline
 ```
 
-### One-command development flow
+### Comparison and Main Phase 5 Runner
 
 ```bash
-python app.py --environment development dev-sync-and-build --feature-set hybrid_intraday
-python app.py --environment development dev-sync-and-build --symbols SPY --feature-set technical_plus_volume
+python app.py compare-model-variants --profile default
+python app.py run-phase5-experiments --profile default
 ```
 
-## Transfer Tracking
+### Examples
 
-Every pull from `PC2` leaves local traceability on `PC1`:
+Run one distribution-oriented comparison:
 
-- incremental event log:
+```bash
+python app.py compare-model-variants \
+  --feature-sets hybrid_intraday \
+  --target-modes quantile_regression \
+  --models quantile_gradient_boosting \
+  --symbols SPY
+```
+
+Run the main experiment command with explicit scope:
+
+```bash
+python app.py run-phase5-experiments \
+  --feature-sets hybrid_intraday technical_plus_volume \
+  --target-modes classification_binary regression_point quantile_regression \
+  --models logistic_regression ridge_regression quantile_gradient_boosting \
+  --symbols SPY QQQ
+```
+
+Reuse an existing feature store and skip feature regeneration:
+
+```bash
+python app.py run-phase5-experiments \
+  --feature-sets hybrid_intraday \
+  --target-modes classification_binary \
+  --models logistic_regression \
+  --skip-feature-build
+```
+
+## Leaderboard
+
+Every comparison run writes a leaderboard under `data/reports/phase5/`.
+
+Outputs include:
+
+- `leaderboard_*.json`
+- `leaderboard_*.csv`
+- `leaderboard_*.parquet`
+
+Each row contains:
+
+- `run_id`
+- timestamp
+- model name
+- target mode
+- feature set
+- hyperparameters
+- split config
+- symbols
+- train / validation / test ranges
+- validation metrics
+- test metrics
+- artifact path
+- ranking score
+
+Interpretation:
+
+- use the leaderboard to compare runs
+- do **not** treat rank 1 as “the final production model”
+- check both technical metrics and economic separation
+- compare the same model across feature sets
+- compare different model families on the same target mode
+
+## Artifacts and Registry
+
+Each run writes a dedicated artifact directory under `data/models/`:
 
 ```text
-imports/from_pc2/transfer_log.jsonl
+data/models/run_<timestamp>_<model>_<feature_set>_<target>_<id>/
+  model.joblib
+  preprocessing.joblib
+  feature_columns.json
+  metrics.json
+  config_snapshot.json
+  training_metadata.json
+  target_config.json
+  leaderboard_row.json
+  evaluation.json
 ```
 
-- per-run JSON reports:
+The registry keeps:
 
-```text
-data/reports/lan_sync/pull_from_pc2_*.json
-```
+- legacy `baseline` and `deep` entries for old flows
+- `phase5_runs` for the new flexible modeling system
 
-Each record includes:
+## Validations and Safety Checks
 
-- source path
-- destination path
-- category
-- file size
-- modification timestamp
-- transfer status
-- validation result
+The pipeline fails clearly when:
 
-## Feature Metadata and Validation
-
-Each `build-features` run writes:
-
-- `data/reports/feature_manifest_*.json`
-- `data/reports/feature_build_report_*.json`
-
-The manifest/report pair stores:
-
-- selected feature set
-- families activated
-- indicators calculated
-- indicators omitted
-- omission reasons
-- parameters used
-- input columns detected
-- feature columns emitted
-- symbol/date range
-- raw quality summary
-- cleaned quality summary
-- feature quality summary
-
-`validate-features` checks for:
-
-- empty feature columns
-- constant columns
-- excessive NaNs
-- infinities
-- duplicate columns
+- the selected feature set cannot be built
+- required feature store files are missing
+- labels cannot be built because no valid price proxy exists
+- feature columns become empty, constant, or excessively sparse
+- the target is missing or invalid
+- the temporal split is too small or empty
+- the selected model is incompatible with the target mode
+- a model artifact would be saved without required metadata
 
 ## Limitations
 
-- The loader still standardizes around the current raw market schema, even though it now preserves extra columns if present.
-- Dependency detection is column-and-non-null based; it does not yet score feature usefulness.
-- No model training comparison is implemented in this subsection.
-- No automatic feature-selection policy exists yet.
-- Feature validation reports data health, but it does not yet gate model training.
+- this phase does not implement execution, risk, or paper trading
+- no walk-forward engine beyond the current temporal split
+- no calibration layer yet for classification probabilities
+- no final model selection policy
+- no deployment-time inference bridge for the new phase 5 artifacts yet
+- optional `xgboost` and `lightgbm` support only works if those packages are installed
 
-## Next Step After This Subsection
+## Phase 6
 
-The next subsection of Phase 5 should build on this layer to add:
+The next phase should build on this by adding:
 
-- labels
-- dataset assembly per feature set
-- baseline training/evaluation with temporal splits
-- artifact metadata tying models to the exact feature set and manifest used
+- stronger walk-forward validation
+- selection policy for promoted models
+- inference bridge from phase 5 artifacts to operational PC2 workflows
+- data drift checks
+- model monitoring
+- decision and risk engines

@@ -38,6 +38,7 @@ def validate_feature_store(
     settings: Settings,
     *,
     feature_root: str | Path | None = None,
+    feature_set_name: str | None = None,
     symbols: Sequence[str] | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
@@ -49,6 +50,8 @@ def validate_feature_store(
         logger_name="microalpha.validate_features",
     )
     root_dir = Path(feature_root or settings.paths.feature_dir)
+    if feature_set_name and feature_root is None:
+        root_dir = root_dir / feature_set_name
     files = list_market_data_files(
         root_dir,
         symbols=symbols or settings.supported_symbols,
@@ -75,6 +78,7 @@ def validate_feature_store(
     payload = {
         "status": "ok" if not report.issues else "warning",
         "feature_root": str(root_dir),
+        "feature_set_name": feature_set_name,
         "file_count": len(files),
         "rows": int(len(combined)),
         "symbols": sorted(combined["symbol"].dropna().astype(str).unique().tolist()) if "symbol" in combined.columns else [],

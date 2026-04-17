@@ -130,6 +130,11 @@ def run_feature_build_pipeline(
     if feature_quality.issues:
         pipeline_logger.warning("Feature quality warnings: %s", ", ".join(feature_quality.issues))
 
+    target_output_root = resolve_feature_output_root(
+        settings,
+        feature_set_name=resolved_feature_set,
+        output_root=output_root,
+    )
     pipeline_logger.info(
         "Generated feature frame rows=%s columns=%s days=%s compatible_indicators=%s omitted_indicators=%s",
         len(feature_frame),
@@ -138,7 +143,7 @@ def run_feature_build_pipeline(
         len(manifest["compatible_indicators"]),
         len(manifest["omitted_indicators"]),
     )
-    write_summary = persist_feature_frame(feature_frame, output_root or settings.paths.feature_dir)
+    write_summary = persist_feature_frame(feature_frame, target_output_root)
     report_paths = persist_feature_report(
         settings,
         raw_quality=raw_quality,
@@ -146,7 +151,7 @@ def run_feature_build_pipeline(
         feature_quality=feature_quality.to_dict(),
         feature_frame=feature_frame,
         manifest=manifest,
-        output_root=output_root or settings.paths.feature_dir,
+        output_root=target_output_root,
     )
 
     duration_seconds = round(time.monotonic() - started_at, 3)
@@ -175,7 +180,7 @@ def run_feature_build_pipeline(
         feature_quality=feature_quality.to_dict(),
         manifest=manifest,
         manifest_path=report_paths["manifest_path"],
-        output_root=str(output_root or settings.paths.feature_dir),
+        output_root=str(target_output_root),
         report_path=report_paths["report_path"],
         duration_seconds=duration_seconds,
     )
@@ -332,6 +337,18 @@ def inspect_feature_dependencies_for_build(
     prepared = prepare_feature_inputs(cleaned_frame, settings)
     plan = inspect_feature_dependencies(prepared, settings, feature_set_name=feature_set_name)
     return plan.to_dict()
+
+
+def resolve_feature_output_root(
+    settings: Settings,
+    *,
+    feature_set_name: str,
+    output_root: str | Path | None = None,
+) -> Path:
+    base_root = Path(output_root or settings.paths.feature_dir)
+    if output_root is not None:
+        return base_root
+    return base_root / feature_set_name
 
 
 def persist_feature_frame(feature_frame: pd.DataFrame, output_root: str | Path) -> dict[str, Any]:
