@@ -15,7 +15,9 @@ from typing import Any, Sequence
 from backtest.runner import run_backtest_stub
 from broker.ib_client import IBClientError
 from config import Settings, load_settings
+from config.phase6 import set_active_model_selection
 from deployment.lan_sync import pull_from_pc2
+from engine.phase6 import risk_check, run_decisions_offline, run_session, show_active_model
 from engine.runtime import RuntimeServices, build_runtime
 from features.feature_pipeline import (
     inspect_feature_dependencies_for_build,
@@ -160,6 +162,36 @@ def build_parser() -> argparse.ArgumentParser:
     run_phase5_parser.add_argument("--skip-feature-build", action="store_true", help="Reuse existing feature stores instead of rebuilding them.")
 
     subparsers.add_parser(
+        "show-active-model",
+        help="Show the currently configured Phase 6 active model selection and the artifact files it depends on.",
+    )
+
+    set_active_parser = subparsers.add_parser(
+        "set-active-model",
+        help="Set the Phase 6 active model selection by run id, artifact directory, or model name.",
+    )
+    set_active_parser.add_argument("--run-id", help="Exact Phase 5 run id to activate.")
+    set_active_parser.add_argument("--artifact-dir", help="Artifact directory to activate.")
+    set_active_parser.add_argument("--model-name", help="Activate the best available run matching this model name.")
+
+    offline_parser = subparsers.add_parser(
+        "run-decisions-offline",
+        help="Load historical features, run Phase 6 inference + decision + risk, and persist structured decision outputs.",
+    )
+    offline_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    offline_parser.add_argument("--start-date", help="Filter data from this session date (YYYY-MM-DD).")
+    offline_parser.add_argument("--end-date", help="Filter data until this session date (YYYY-MM-DD).")
+    offline_parser.add_argument("--limit", type=int, help="Only evaluate the latest N rows after filtering.")
+    offline_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    offline_parser.add_argument("--label-root", help="Override the label parquet root for offline realized-outcome joins.")
+    offline_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    subparsers.add_parser(
+        "risk-check",
+        help="Validate the active model, Phase 6 decision/risk configuration, and operational readiness.",
+    )
+
+    subparsers.add_parser(
         "list-feature-sets",
         help="List configured feature sets, their families, and the configured default.",
     )
@@ -214,13 +246,17 @@ def build_parser() -> argparse.ArgumentParser:
     session_parser = subparsers.add_parser(
         "run-session",
         aliases=["session-cycle", "session"],
-        help="Run one ORB + feature + model + risk session cycle.",
+        help="Run one Phase 6 operational decision cycle over the latest available feature rows without sending orders.",
     )
     session_parser.add_argument(
         "--paper",
         action="store_true",
-        help="Request paper execution. Safety gates in config and risk still apply.",
+        help="Reserved for future use. Phase 6 still does not send orders.",
     )
+    session_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    session_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    session_parser.add_argument("--latest-per-symbol", type=int, default=1, help="How many latest rows per symbol to evaluate.")
+    session_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
 
     dashboard_parser = subparsers.add_parser(
         "dashboard",
@@ -445,6 +481,48 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "show-active-model":
+            print_result(show_active_model(settings))
+            return 0
+
+        if args.command == "set-active-model":
+            if not any([args.run_id, args.artifact_dir, args.model_name]):
+                print_result(
+                    {
+                        "status": "error",
+                        "message": "set-active-model requires --run-id, --artifact-dir, or --model-name.",
+                    }
+                )
+                return 1
+            print_result(
+                set_active_model_selection(
+                    settings,
+                    run_id=args.run_id,
+                    artifact_dir=args.artifact_dir,
+                    model_name=args.model_name,
+                )
+            )
+            return 0
+
+        if args.command == "run-decisions-offline":
+            print_result(
+                run_decisions_offline(
+                    settings,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    limit=args.limit,
+                    feature_root=args.feature_root,
+                    label_root=args.label_root,
+                    decision_log_path=args.decision_log_path,
+                )
+            )
+            return 0
+
+        if args.command == "risk-check":
+            print_result(risk_check(settings))
+            return 0
+
         if args.command == "validate-features":
             print_result(
                 validate_feature_store(
@@ -475,6 +553,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
+        if args.command in {"run-session", "session-cycle", "session"}:
+            print_result(
+                run_session(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    latest_per_symbol=args.latest_per_symbol,
+                    decision_log_path=args.decision_log_path,
+                    execute_requested=args.paper,
+                )
+            )
+            return 0
+
         runtime = build_runtime(
             env_file=args.env_file,
             config_dir=args.config_dir,
@@ -483,10 +574,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "train":
             return handle_train(runtime, args)
-
-        if args.command in {"run-session", "session-cycle", "session"}:
-            print_result(runtime.session_engine.run_cycle(execute_requested=args.paper))
-            return 0
 
         if args.command in {"dashboard", "launch-ui", "ui"}:
             return launch_dashboard(runtime.settings, env_file=args.env_file, config_dir=args.config_dir, environment=args.environment, host=args.host, port=args.port)

@@ -1,0 +1,10 @@
+active_model:
+  run_id: run_20260417T071510_logistic_regression_hybrid_intraday_classification_binary_3cfe7f56
+  artifact_dir: data/models/run_20260417T071510_logistic_regression_hybrid_intraday_classification_binary_3cfe7f56
+  model_name: logistic_regression
+  model_type: logistic_regression
+  feature_set_name: hybrid_intraday
+  target_mode: classification_binary
+  selection_reason: Highest validation ranking score among the currently available Phase 5 operational candidates, using a simple classification target and a stable tabular model.
+  source_leaderboard: data/reports/phase5/leaderboard_default_20260417T071511Z.csv
+  updated_at_utc: '2026-04-17T07:44:39.297784+00:00'

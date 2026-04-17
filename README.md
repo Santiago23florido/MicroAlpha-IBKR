@@ -1,20 +1,23 @@
-# MicroAlpha-IBKR Phase 5: Flexible Modeling on Top of the LAN Research Pipeline
+# MicroAlpha-IBKR Phase 6: Inference, Decision, and Risk on Top of the LAN Modeling Pipeline
 
 ## Purpose
 
-This repository now supports a full Phase 5 research workflow on `PC1` while keeping the dual-machine architecture intact:
+This repository now supports the Phase 6 operational layer on top of the Phase 5 modeling workflow while keeping the dual-machine architecture intact:
 
 - `PC2`: collector and operational raw data source
-- `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, and experiment tracking
+- `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, and operational risk checks
 
-Phase 5 does **not** decide the final model for you. It gives you a reproducible way to compare:
+Phase 6 still does **not** send real orders. It connects:
 
-- multiple feature sets
-- multiple target modes
-- multiple model families
-- multiple hyperparameter variants
+- feature stores
+- one explicitly selected active model from Phase 5
+- a normalized inference layer
+- a decision engine
+- a risk engine
+- structured decision logs
+- offline and session runners without order routing
 
-and then inspect the leaderboard before choosing what deserves the next phase.
+The active model is visible in `config/active_model.yaml`, not hidden in code.
 
 ## Architecture
 
@@ -43,11 +46,15 @@ MicroAlpha-IBKR/
 │   ├── settings.yaml
 │   ├── feature_sets.yaml
 │   ├── modeling.yaml
+│   ├── active_model.yaml
+│   ├── phase6.yaml
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
 ├── deployment/
 │   └── lan_sync.py
+├── engine/
+│   └── phase6.py
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
@@ -57,7 +64,9 @@ MicroAlpha-IBKR/
 │   │   └── labels/
 │   ├── models/
 │   └── reports/
-│       └── phase5/
+│       ├── phase5/
+│       ├── phase6/
+│       └── decisions/
 ├── features/
 │   ├── definitions.py
 │   ├── registry.py
@@ -76,6 +85,13 @@ MicroAlpha-IBKR/
 │   ├── inference.py
 │   ├── train_baseline.py
 │   └── train_deep.py
+├── risk/
+│   └── risk_engine.py
+├── strategy/
+│   ├── decision_engine.py
+│   └── explainability.py
+├── storage/
+│   └── decision_logs.py
 ├── imports/
 │   └── from_pc2/
 ├── scripts/
@@ -86,7 +102,11 @@ MicroAlpha-IBKR/
 │   ├── train_baseline.py
 │   ├── evaluate_baseline.py
 │   ├── compare_model_variants.py
-│   └── run_phase5_experiments.py
+│   ├── run_phase5_experiments.py
+│   ├── show_active_model.py
+│   ├── set_active_model.py
+│   ├── run_decisions_offline.py
+│   └── risk_check.py
 └── tests/
 ```
 
@@ -101,6 +121,8 @@ MicroAlpha-IBKR/
 7. `PC1` runs `build-labels`.
 8. Labels are written to `data/processed/labels/<feature_set>/<target_mode>/YYYY-MM-DD/SYMBOL.parquet`.
 9. `PC1` trains and compares model variants.
+10. `PC1` selects one active model for operational inference.
+11. `PC1` runs offline or session decisions without sending orders.
 
 `PC2` remains the operational source of truth for collection.  
 `PC1` remains the research and experiment node.
@@ -141,9 +163,9 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Phase 5 Architecture
+## Phase 5 and Phase 6 Architecture
 
-Phase 5 is organized in these blocks:
+Phase 5 remains the modeling layer:
 
 1. feature / indicator system
 2. labeling / target system
@@ -153,6 +175,19 @@ Phase 5 is organized in these blocks:
 6. evaluation and leaderboard
 7. model registry and artifacts
 8. simple execution commands
+
+Phase 6 adds:
+
+1. active model selection
+2. uniform model loading and inference
+3. normalized prediction output
+4. decision engine
+5. risk engine
+6. position sizing
+7. explainability
+8. offline decision runner
+9. session runner without orders
+10. structured decision logging
 
 ### Feature Registry
 
@@ -405,6 +440,116 @@ python app.py compare-model-variants --profile default
 python app.py run-phase5-experiments --profile default
 ```
 
+### Phase 6 Operational Commands
+
+```bash
+python app.py show-active-model
+python app.py set-active-model --run-id <phase5_run_id>
+python app.py risk-check
+python app.py run-decisions-offline --symbols SPY --limit 200
+python app.py run-session --symbols SPY
+```
+
+## Active Model Selection
+
+The default operational model is stored in:
+
+```text
+config/active_model.yaml
+```
+
+That file declares:
+
+- `run_id`
+- `artifact_dir`
+- `model_name`
+- `model_type`
+- `feature_set_name`
+- `target_mode`
+- `selection_reason`
+
+Change it with:
+
+```bash
+python app.py set-active-model --run-id <phase5_run_id>
+```
+
+or, if you want the best run for a given model family:
+
+```bash
+python app.py set-active-model --model-name logistic_regression
+```
+
+Review the current selection with:
+
+```bash
+python app.py show-active-model
+```
+
+## Phase 6 Inference and Decisions
+
+`models/inference.py` loads the active Phase 5 artifact and normalizes output into one structure for the operational layer. Depending on the target mode, it can emit:
+
+- `score`
+- `probability`
+- `predicted_return_bps`
+- `predicted_quantiles`
+- `class_label`
+- model metadata
+
+`strategy/decision_engine.py` then converts that prediction into:
+
+- `LONG`
+- `SHORT`
+- `NO_TRADE`
+
+plus:
+
+- confidence
+- expected return proxy
+- expected cost
+- net edge
+- size suggestion
+- reasons
+
+`risk/risk_engine.py` applies:
+
+- max trades per session
+- daily loss limit
+- symbol loss limit
+- cooldown after loss
+- spread and estimated-cost limits
+- kill switch on invalid/anomalous model output
+
+## Offline and Session Runners
+
+Offline review:
+
+```bash
+python app.py run-decisions-offline --symbols SPY --limit 200
+```
+
+This command:
+
+1. loads the active feature set
+2. loads the active model
+3. runs inference row by row
+4. applies decision rules
+5. applies risk rules
+6. writes JSONL plus CSV/Parquet summaries under `data/reports/phase6/`
+
+Session review:
+
+```bash
+python app.py run-session --symbols SPY
+```
+
+This command reads the latest available feature rows and runs the same decision and risk logic, but:
+
+- does **not** send orders
+- does **not** paper trade yet
+- only logs what the current operational layer would decide
+
 ### Examples
 
 Run one distribution-oriented comparison:
@@ -508,20 +653,21 @@ The pipeline fails clearly when:
 
 ## Limitations
 
-- this phase does not implement execution, risk, or paper trading
-- no walk-forward engine beyond the current temporal split
-- no calibration layer yet for classification probabilities
-- no final model selection policy
-- no deployment-time inference bridge for the new phase 5 artifacts yet
-- optional `xgboost` and `lightgbm` support only works if those packages are installed
+- Phase 6 does not send real orders yet.
+- It also does not implement final paper trading.
+- Binary classification targets can only express `LONG` or `NO_TRADE` cleanly; they are not a true short target.
+- The session runner currently operates on the latest available feature rows, not on a live streaming feature service.
+- The risk engine is prepared for realized PnL tracking, but without broker integration it only uses offline realized outcomes when labels are available.
+- No portfolio optimization or multi-position allocation logic is included yet.
+- Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
 
-## Phase 6
+## Phase 7
 
 The next phase should build on this by adding:
 
-- stronger walk-forward validation
-- selection policy for promoted models
-- inference bridge from phase 5 artifacts to operational PC2 workflows
-- data drift checks
-- model monitoring
-- decision and risk engines
+- paper trading with broker integration gates
+- stronger session state and realized PnL plumbing
+- decision-to-order translation
+- execution audit and fill reconciliation
+- monitoring and drift checks
+- promotion rules for switching the active model safely
