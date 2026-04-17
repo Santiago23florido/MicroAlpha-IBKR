@@ -40,10 +40,16 @@ data/reports/*
 !data/reports/.gitkeep
 !data/reports/sync/
 !data/reports/lan_sync/
+!data/reports/phase6/
+!data/reports/decisions/
 data/reports/sync/*
 !data/reports/sync/.gitkeep
 data/reports/lan_sync/*
 !data/reports/lan_sync/.gitkeep
+data/reports/phase6/*
+!data/reports/phase6/.gitkeep
+data/reports/decisions/*
+!data/reports/decisions/.gitkeep
 imports/from_pc2/*
 !imports/from_pc2/raw/
 !imports/from_pc2/meta/

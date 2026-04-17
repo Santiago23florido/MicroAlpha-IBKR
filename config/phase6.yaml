@@ -1,0 +1,54 @@
+defaults:
+  decision:
+    score_threshold: 0.0
+    probability_threshold: 0.58
+    predicted_return_min_bps: 2.5
+    net_edge_min_bps: 0.5
+    allow_long: true
+    allow_short: true
+    spread_max_bps: 12.0
+    cost_max_bps: 18.0
+    allowed_trading_start: "09:35"
+    allowed_trading_end: "15:30"
+    max_quantile_interval_width_bps: 35.0
+    critical_feature_columns:
+      - estimated_cost_bps
+      - spread_bps
+      - price_proxy
+    explain_feature_columns:
+      - spread_bps
+      - estimated_cost_bps
+      - orb_width
+      - distance_to_vwap
+      - relative_volume
+  risk:
+    enabled: true
+    max_trades_per_session: 4
+    daily_loss_limit_bps: 40.0
+    symbol_loss_limit_bps: 25.0
+    cooldown_minutes: 20
+    max_spread_bps: 12.0
+    max_estimated_cost_bps: 18.0
+    kill_switch_on_invalid_model: true
+    kill_switch_on_anomalous_prediction: true
+  sizing:
+    default_position_size: 1
+    max_position_size: 3
+    min_confidence_for_full_size: 0.72
+    min_size_confidence_floor: 0.55
+  logging:
+    enabled: true
+    decision_log_path: data/reports/decisions/decision_log.jsonl
+    report_dir: data/reports/phase6
+
+environments:
+  development:
+    decision:
+      allow_short: true
+    risk:
+      enabled: true
+  deploy:
+    decision:
+      allow_short: false
+    risk:
+      enabled: true
