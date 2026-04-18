@@ -4,5 +4,1829 @@
     "deep": null
   },
   "baseline": [],
-  "deep": []
+  "deep": [],
+  "phase5_runs": [
+    {
+      "artifact_dir": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_d3473e6c",
+      "artifact_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_d3473e6c/model.joblib",
+      "feature_columns": [
+        "last_price",
+        "bid",
+        "ask",
+        "spread",
+        "bid_size",
+        "ask_size",
+        "last_size",
+        "volume",
+        "mid_price",
+        "spread_bps",
+        "price_proxy",
+        "high_price_proxy",
+        "low_price_proxy",
+        "sma_short",
+        "sma_medium",
+        "sma_long",
+        "ema_short",
+        "ema_medium",
+        "ema_long",
+        "moving_average_distance_short_bps",
+        "moving_average_distance_medium_bps",
+        "moving_average_distance_long_bps",
+        "moving_average_slope_short_bps",
+        "moving_average_slope_medium_bps",
+        "moving_average_slope_long_bps",
+        "ma_crossover_short_long_bps",
+        "macd_line",
+        "macd_signal",
+        "macd_histogram",
+        "adx",
+        "plus_di",
+        "minus_di",
+        "rsi",
+        "roc_bps",
+        "momentum_simple_bps",
+        "stochastic_k",
+        "stochastic_d",
+        "williams_r",
+        "cci",
+        "true_range",
+        "atr",
+        "rolling_volatility_short_bps",
+        "rolling_volatility_medium_bps",
+        "rolling_volatility_long_bps",
+        "rolling_std_returns_short_bps",
+        "rolling_std_returns_medium_bps",
+        "rolling_std_returns_long_bps",
+        "bollinger_mid",
+        "bollinger_upper",
+        "bollinger_lower",
+        "bollinger_bandwidth_bps",
+        "zscore_price",
+        "orb_high",
+        "orb_low",
+        "orb_width",
+        "orb_width_bps",
+        "orb_range_width",
+        "orb_range_width_bps",
+        "orb_relative_price_position",
+        "breakout_distance",
+        "breakout_distance_bps",
+        "orb_range_complete",
+        "rolling_volume_mean",
+        "relative_volume",
+        "vwap",
+        "distance_to_vwap_bps",
+        "vwap_slope_bps",
+        "obv",
+        "volume_spike_flag",
+        "accumulation_distribution",
+        "mfi",
+        "rolling_spread_mean_bps",
+        "rolling_spread_std_bps",
+        "weighted_mid_price",
+        "imbalance",
+        "rolling_imbalance_mean",
+        "rolling_imbalance_std",
+        "delta_imbalance",
+        "total_depth",
+        "depth_ratio",
+        "microprice_proxy",
+        "minute_of_day",
+        "minutes_since_open",
+        "time_of_day_sin",
+        "time_of_day_cos",
+        "seconds_since_open",
+        "seconds_to_close",
+        "opening_session_flag",
+        "midday_flag",
+        "day_of_week",
+        "intraday_volume_percentile",
+        "intraday_spread_percentile",
+        "return_1_bps",
+        "return_short_bps",
+        "return_medium_bps",
+        "bid_ask_imbalance",
+        "micro_price",
+        "vwap_approx",
+        "spread_proxy_bps",
+        "slippage_proxy_bps",
+        "estimated_cost_bps"
+      ],
+      "feature_set": "hybrid_intraday",
+      "hyperparameters": {
+        "C": 0.5,
+        "class_weight": null,
+        "max_iter": 500
+      },
+      "metrics": {
+        "test": {
+          "accuracy": 0.9436619718309859,
+          "actual_distribution": {
+            "0": 272,
+            "1": 12
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              265,
+              7
+            ],
+            [
+              9,
+              3
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": -9.829268147507031,
+            "score_buckets": [
+              {
+                "bucket": "(-0.00099883, 6.88e-05]",
+                "count": 55,
+                "mean_future_net_return_bps": -8.162519651692948,
+                "mean_future_return_bps": -8.162519651692948,
+                "mean_score": 2.367662376756531e-05
+              },
+              {
+                "bucket": "(6.88e-05, 0.000306]",
+                "count": 55,
+                "mean_future_net_return_bps": -4.819650331430285,
+                "mean_future_return_bps": -4.819650331430285,
+                "mean_score": 0.000153911476514956
+              },
+              {
+                "bucket": "(0.000306, 0.00291]",
+                "count": 54,
+                "mean_future_net_return_bps": -3.19363609433652,
+                "mean_future_return_bps": -3.19363609433652,
+                "mean_score": 0.0010985745687677624
+              },
+              {
+                "bucket": "(0.00291, 0.0231]",
+                "count": 55,
+                "mean_future_net_return_bps": -2.246407071497405,
+                "mean_future_return_bps": -2.246407071497405,
+                "mean_score": 0.009742391985614093
+              },
+              {
+                "bucket": "(0.0231, 0.882]",
+                "count": 55,
+                "mean_future_net_return_bps": 1.323592005173708,
+                "mean_future_return_bps": 1.323592005173708,
+                "mean_score": 0.21675128236718633
+              }
+            ],
+            "score_spread_bps": 12.61923316700236,
+            "top_decile_count": 28,
+            "top_decile_mean_future_return_bps": 2.7899650194953276,
+            "top_decile_mean_net_return_bps": 2.7899650194953276,
+            "top_signal_hit_rate": 0.9642857142857143
+          },
+          "f1_macro": 0.6217116217116216,
+          "precision_macro": 0.6335766423357664,
+          "predicted_distribution": {
+            "0": 274,
+            "1": 10
+          },
+          "recall_macro": 0.6121323529411764,
+          "roc_auc": 0.9322916666666666,
+          "rows": 284,
+          "weighted_f1": 0.9412043355705326
+        },
+        "validation": {
+          "accuracy": 0.5512820512820513,
+          "actual_distribution": {
+            "0": 58,
+            "1": 20
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              28,
+              30
+            ],
+            [
+              5,
+              15
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": 3.0776261898005193,
+            "score_buckets": [
+              {
+                "bucket": "(0.0507, 0.279]",
+                "count": 16,
+                "mean_future_net_return_bps": 2.763926367583717,
+                "mean_future_return_bps": 2.763926367583717,
+                "mean_score": 0.1597711285481367
+              },
+              {
+                "bucket": "(0.279, 0.448]",
+                "count": 15,
+                "mean_future_net_return_bps": 2.5167424500621283,
+                "mean_future_return_bps": 2.5167424500621283,
+                "mean_score": 0.36394075813977367
+              },
+              {
+                "bucket": "(0.448, 0.748]",
+                "count": 16,
+                "mean_future_net_return_bps": 1.7623569504387953,
+                "mean_future_return_bps": 1.7623569504387953,
+                "mean_score": 0.5871744531905871
+              },
+              {
+                "bucket": "(0.748, 0.888]",
+                "count": 15,
+                "mean_future_net_return_bps": 0.8009870593250101,
+                "mean_future_return_bps": 0.8009870593250101,
+                "mean_score": 0.8289006980023682
+              },
+              {
+                "bucket": "(0.888, 0.997]",
+                "count": 16,
+                "mean_future_net_return_bps": 8.78855426046431,
+                "mean_future_return_bps": 8.78855426046431,
+                "mean_score": 0.9862559374829786
+              }
+            ],
+            "score_spread_bps": 6.065669556591727,
+            "top_decile_count": 8,
+            "top_decile_mean_future_return_bps": 9.143295746392246,
+            "top_decile_mean_net_return_bps": 9.143295746392246,
+            "top_signal_hit_rate": 1.0
+          },
+          "f1_macro": 0.5384615384615385,
+          "precision_macro": 0.5909090909090909,
+          "predicted_distribution": {
+            "0": 33,
+            "1": 45
+          },
+          "recall_macro": 0.6163793103448276,
+          "roc_auc": 0.8017241379310346,
+          "rows": 78,
+          "weighted_f1": 0.5759368836291914
+        }
+      },
+      "model_name": "logistic_regression",
+      "model_type": "logistic_regression",
+      "preprocessing_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_d3473e6c/preprocessing.joblib",
+      "ranking_score": 0.5384615384615385,
+      "registered_at": "2026-04-18T19:10:33.298472+00:00",
+      "run_id": "run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_d3473e6c",
+      "split_config": {
+        "dropna_target": true,
+        "min_rows": 120,
+        "min_test_rows": 20,
+        "min_train_rows": 60,
+        "min_unique_dates": 3,
+        "min_validation_rows": 20,
+        "strict_feature_validation": true,
+        "test_ratio": 0.15,
+        "train_ratio": 0.7,
+        "validation_ratio": 0.15
+      },
+      "symbols": [
+        "SPY"
+      ],
+      "target_config_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_d3473e6c/target_config.json",
+      "target_mode": "classification_binary",
+      "test_metrics": {
+        "accuracy": 0.9436619718309859,
+        "actual_distribution": {
+          "0": 272,
+          "1": 12
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            265,
+            7
+          ],
+          [
+            9,
+            3
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": -9.829268147507031,
+          "score_buckets": [
+            {
+              "bucket": "(-0.00099883, 6.88e-05]",
+              "count": 55,
+              "mean_future_net_return_bps": -8.162519651692948,
+              "mean_future_return_bps": -8.162519651692948,
+              "mean_score": 2.367662376756531e-05
+            },
+            {
+              "bucket": "(6.88e-05, 0.000306]",
+              "count": 55,
+              "mean_future_net_return_bps": -4.819650331430285,
+              "mean_future_return_bps": -4.819650331430285,
+              "mean_score": 0.000153911476514956
+            },
+            {
+              "bucket": "(0.000306, 0.00291]",
+              "count": 54,
+              "mean_future_net_return_bps": -3.19363609433652,
+              "mean_future_return_bps": -3.19363609433652,
+              "mean_score": 0.0010985745687677624
+            },
+            {
+              "bucket": "(0.00291, 0.0231]",
+              "count": 55,
+              "mean_future_net_return_bps": -2.246407071497405,
+              "mean_future_return_bps": -2.246407071497405,
+              "mean_score": 0.009742391985614093
+            },
+            {
+              "bucket": "(0.0231, 0.882]",
+              "count": 55,
+              "mean_future_net_return_bps": 1.323592005173708,
+              "mean_future_return_bps": 1.323592005173708,
+              "mean_score": 0.21675128236718633
+            }
+          ],
+          "score_spread_bps": 12.61923316700236,
+          "top_decile_count": 28,
+          "top_decile_mean_future_return_bps": 2.7899650194953276,
+          "top_decile_mean_net_return_bps": 2.7899650194953276,
+          "top_signal_hit_rate": 0.9642857142857143
+        },
+        "f1_macro": 0.6217116217116216,
+        "precision_macro": 0.6335766423357664,
+        "predicted_distribution": {
+          "0": 274,
+          "1": 10
+        },
+        "recall_macro": 0.6121323529411764,
+        "roc_auc": 0.9322916666666666,
+        "rows": 284,
+        "weighted_f1": 0.9412043355705326
+      },
+      "test_range": [
+        "2026-04-14",
+        "2026-04-15"
+      ],
+      "timestamp_utc": "2026-04-18T19:10:33.296897+00:00",
+      "train_range": [
+        "2026-04-06",
+        "2026-04-10"
+      ],
+      "training_metadata_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_d3473e6c/training_metadata.json",
+      "validation_metrics": {
+        "accuracy": 0.5512820512820513,
+        "actual_distribution": {
+          "0": 58,
+          "1": 20
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            28,
+            30
+          ],
+          [
+            5,
+            15
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": 3.0776261898005193,
+          "score_buckets": [
+            {
+              "bucket": "(0.0507, 0.279]",
+              "count": 16,
+              "mean_future_net_return_bps": 2.763926367583717,
+              "mean_future_return_bps": 2.763926367583717,
+              "mean_score": 0.1597711285481367
+            },
+            {
+              "bucket": "(0.279, 0.448]",
+              "count": 15,
+              "mean_future_net_return_bps": 2.5167424500621283,
+              "mean_future_return_bps": 2.5167424500621283,
+              "mean_score": 0.36394075813977367
+            },
+            {
+              "bucket": "(0.448, 0.748]",
+              "count": 16,
+              "mean_future_net_return_bps": 1.7623569504387953,
+              "mean_future_return_bps": 1.7623569504387953,
+              "mean_score": 0.5871744531905871
+            },
+            {
+              "bucket": "(0.748, 0.888]",
+              "count": 15,
+              "mean_future_net_return_bps": 0.8009870593250101,
+              "mean_future_return_bps": 0.8009870593250101,
+              "mean_score": 0.8289006980023682
+            },
+            {
+              "bucket": "(0.888, 0.997]",
+              "count": 16,
+              "mean_future_net_return_bps": 8.78855426046431,
+              "mean_future_return_bps": 8.78855426046431,
+              "mean_score": 0.9862559374829786
+            }
+          ],
+          "score_spread_bps": 6.065669556591727,
+          "top_decile_count": 8,
+          "top_decile_mean_future_return_bps": 9.143295746392246,
+          "top_decile_mean_net_return_bps": 9.143295746392246,
+          "top_signal_hit_rate": 1.0
+        },
+        "f1_macro": 0.5384615384615385,
+        "precision_macro": 0.5909090909090909,
+        "predicted_distribution": {
+          "0": 33,
+          "1": 45
+        },
+        "recall_macro": 0.6163793103448276,
+        "roc_auc": 0.8017241379310346,
+        "rows": 78,
+        "weighted_f1": 0.5759368836291914
+      },
+      "validation_range": [
+        "2026-04-13",
+        "2026-04-13"
+      ]
+    },
+    {
+      "artifact_dir": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_a39ad13e",
+      "artifact_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_a39ad13e/model.joblib",
+      "feature_columns": [
+        "last_price",
+        "bid",
+        "ask",
+        "spread",
+        "bid_size",
+        "ask_size",
+        "last_size",
+        "volume",
+        "mid_price",
+        "spread_bps",
+        "price_proxy",
+        "high_price_proxy",
+        "low_price_proxy",
+        "sma_short",
+        "sma_medium",
+        "sma_long",
+        "ema_short",
+        "ema_medium",
+        "ema_long",
+        "moving_average_distance_short_bps",
+        "moving_average_distance_medium_bps",
+        "moving_average_distance_long_bps",
+        "moving_average_slope_short_bps",
+        "moving_average_slope_medium_bps",
+        "moving_average_slope_long_bps",
+        "ma_crossover_short_long_bps",
+        "macd_line",
+        "macd_signal",
+        "macd_histogram",
+        "adx",
+        "plus_di",
+        "minus_di",
+        "rsi",
+        "roc_bps",
+        "momentum_simple_bps",
+        "stochastic_k",
+        "stochastic_d",
+        "williams_r",
+        "cci",
+        "true_range",
+        "atr",
+        "rolling_volatility_short_bps",
+        "rolling_volatility_medium_bps",
+        "rolling_volatility_long_bps",
+        "rolling_std_returns_short_bps",
+        "rolling_std_returns_medium_bps",
+        "rolling_std_returns_long_bps",
+        "bollinger_mid",
+        "bollinger_upper",
+        "bollinger_lower",
+        "bollinger_bandwidth_bps",
+        "zscore_price",
+        "orb_high",
+        "orb_low",
+        "orb_width",
+        "orb_width_bps",
+        "orb_range_width",
+        "orb_range_width_bps",
+        "orb_relative_price_position",
+        "breakout_distance",
+        "breakout_distance_bps",
+        "orb_range_complete",
+        "rolling_volume_mean",
+        "relative_volume",
+        "vwap",
+        "distance_to_vwap_bps",
+        "vwap_slope_bps",
+        "obv",
+        "volume_spike_flag",
+        "accumulation_distribution",
+        "mfi",
+        "rolling_spread_mean_bps",
+        "rolling_spread_std_bps",
+        "weighted_mid_price",
+        "imbalance",
+        "rolling_imbalance_mean",
+        "rolling_imbalance_std",
+        "delta_imbalance",
+        "total_depth",
+        "depth_ratio",
+        "microprice_proxy",
+        "minute_of_day",
+        "minutes_since_open",
+        "time_of_day_sin",
+        "time_of_day_cos",
+        "seconds_since_open",
+        "seconds_to_close",
+        "opening_session_flag",
+        "midday_flag",
+        "day_of_week",
+        "intraday_volume_percentile",
+        "intraday_spread_percentile",
+        "return_1_bps",
+        "return_short_bps",
+        "return_medium_bps",
+        "bid_ask_imbalance",
+        "micro_price",
+        "vwap_approx",
+        "spread_proxy_bps",
+        "slippage_proxy_bps",
+        "estimated_cost_bps"
+      ],
+      "feature_set": "hybrid_intraday",
+      "hyperparameters": {
+        "C": 0.5,
+        "class_weight": "balanced",
+        "max_iter": 500
+      },
+      "metrics": {
+        "test": {
+          "accuracy": 0.9190140845070423,
+          "actual_distribution": {
+            "0": 272,
+            "1": 12
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              256,
+              16
+            ],
+            [
+              7,
+              5
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": -9.583484239726337,
+            "score_buckets": [
+              {
+                "bucket": "(-0.000999513, 5.63e-05]",
+                "count": 55,
+                "mean_future_net_return_bps": -8.214486761402542,
+                "mean_future_return_bps": -8.214486761402542,
+                "mean_score": 1.954688465913656e-05
+              },
+              {
+                "bucket": "(5.63e-05, 0.000542]",
+                "count": 55,
+                "mean_future_net_return_bps": -4.666270307013069,
+                "mean_future_return_bps": -4.666270307013069,
+                "mean_score": 0.00018370036116884575
+              },
+              {
+                "bucket": "(0.000542, 0.0136]",
+                "count": 54,
+                "mean_future_net_return_bps": -2.920595724923952,
+                "mean_future_return_bps": -2.920595724923952,
+                "mean_score": 0.004324580688661962
+              },
+              {
+                "bucket": "(0.0136, 0.108]",
+                "count": 55,
+                "mean_future_net_return_bps": -1.9428051692616495,
+                "mean_future_return_bps": -1.9428051692616495,
+                "mean_score": 0.04011220969152061
+              },
+              {
+                "bucket": "(0.108, 0.983]",
+                "count": 55,
+                "mean_future_net_return_bps": 0.6505011891707178,
+                "mean_future_return_bps": 0.6505011891707178,
+                "mean_score": 0.4276099723415058
+              }
+            ],
+            "score_spread_bps": 12.214907978954782,
+            "top_decile_count": 28,
+            "top_decile_mean_future_return_bps": 2.631423739228446,
+            "top_decile_mean_net_return_bps": 2.631423739228446,
+            "top_signal_hit_rate": 0.9285714285714286
+          },
+          "f1_macro": 0.6300198244123478,
+          "precision_macro": 0.6057396342567445,
+          "predicted_distribution": {
+            "0": 263,
+            "1": 21
+          },
+          "recall_macro": 0.678921568627451,
+          "roc_auc": 0.9338235294117647,
+          "rows": 284,
+          "weighted_f1": 0.9293764284945014
+        },
+        "validation": {
+          "accuracy": 0.2564102564102564,
+          "actual_distribution": {
+            "0": 58,
+            "1": 20
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              2,
+              56
+            ],
+            [
+              2,
+              18
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": 3.575863815272161,
+            "score_buckets": [
+              {
+                "bucket": "(0.377, 0.743]",
+                "count": 16,
+                "mean_future_net_return_bps": 2.8473036470701776,
+                "mean_future_return_bps": 2.8473036470701776,
+                "mean_score": 0.5570244686660268
+              },
+              {
+                "bucket": "(0.743, 0.834]",
+                "count": 15,
+                "mean_future_net_return_bps": 2.650737316800401,
+                "mean_future_return_bps": 2.650737316800401,
+                "mean_score": 0.7955893417893733
+              },
+              {
+                "bucket": "(0.834, 0.958]",
+                "count": 16,
+                "mean_future_net_return_bps": 2.0309888703734575,
+                "mean_future_return_bps": 2.0309888703734575,
+                "mean_score": 0.8957628174902573
+              },
+              {
+                "bucket": "(0.958, 0.986]",
+                "count": 15,
+                "mean_future_net_return_bps": 0.6694376168387524,
+                "mean_future_return_bps": 0.6694376168387524,
+                "mean_score": 0.9710575244106802
+              },
+              {
+                "bucket": "(0.986, 0.999]",
+                "count": 16,
+                "mean_future_net_return_bps": 8.434252475806923,
+                "mean_future_return_bps": 8.434252475806923,
+                "mean_score": 0.9970395175343333
+              }
+            ],
+            "score_spread_bps": 5.221629076150302,
+            "top_decile_count": 8,
+            "top_decile_mean_future_return_bps": 8.797492891422463,
+            "top_decile_mean_net_return_bps": 8.797492891422463,
+            "top_signal_hit_rate": 1.0
+          },
+          "f1_macro": 0.2237474262182567,
+          "precision_macro": 0.3716216216216216,
+          "predicted_distribution": {
+            "0": 4,
+            "1": 74
+          },
+          "recall_macro": 0.4672413793103448,
+          "roc_auc": 0.7913793103448277,
+          "rows": 78,
+          "weighted_f1": 0.14617320451225735
+        }
+      },
+      "model_name": "logistic_regression",
+      "model_type": "logistic_regression",
+      "preprocessing_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_a39ad13e/preprocessing.joblib",
+      "ranking_score": 0.2237474262182567,
+      "registered_at": "2026-04-18T19:10:33.505710+00:00",
+      "run_id": "run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_a39ad13e",
+      "split_config": {
+        "dropna_target": true,
+        "min_rows": 120,
+        "min_test_rows": 20,
+        "min_train_rows": 60,
+        "min_unique_dates": 3,
+        "min_validation_rows": 20,
+        "strict_feature_validation": true,
+        "test_ratio": 0.15,
+        "train_ratio": 0.7,
+        "validation_ratio": 0.15
+      },
+      "symbols": [
+        "SPY"
+      ],
+      "target_config_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_a39ad13e/target_config.json",
+      "target_mode": "classification_binary",
+      "test_metrics": {
+        "accuracy": 0.9190140845070423,
+        "actual_distribution": {
+          "0": 272,
+          "1": 12
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            256,
+            16
+          ],
+          [
+            7,
+            5
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": -9.583484239726337,
+          "score_buckets": [
+            {
+              "bucket": "(-0.000999513, 5.63e-05]",
+              "count": 55,
+              "mean_future_net_return_bps": -8.214486761402542,
+              "mean_future_return_bps": -8.214486761402542,
+              "mean_score": 1.954688465913656e-05
+            },
+            {
+              "bucket": "(5.63e-05, 0.000542]",
+              "count": 55,
+              "mean_future_net_return_bps": -4.666270307013069,
+              "mean_future_return_bps": -4.666270307013069,
+              "mean_score": 0.00018370036116884575
+            },
+            {
+              "bucket": "(0.000542, 0.0136]",
+              "count": 54,
+              "mean_future_net_return_bps": -2.920595724923952,
+              "mean_future_return_bps": -2.920595724923952,
+              "mean_score": 0.004324580688661962
+            },
+            {
+              "bucket": "(0.0136, 0.108]",
+              "count": 55,
+              "mean_future_net_return_bps": -1.9428051692616495,
+              "mean_future_return_bps": -1.9428051692616495,
+              "mean_score": 0.04011220969152061
+            },
+            {
+              "bucket": "(0.108, 0.983]",
+              "count": 55,
+              "mean_future_net_return_bps": 0.6505011891707178,
+              "mean_future_return_bps": 0.6505011891707178,
+              "mean_score": 0.4276099723415058
+            }
+          ],
+          "score_spread_bps": 12.214907978954782,
+          "top_decile_count": 28,
+          "top_decile_mean_future_return_bps": 2.631423739228446,
+          "top_decile_mean_net_return_bps": 2.631423739228446,
+          "top_signal_hit_rate": 0.9285714285714286
+        },
+        "f1_macro": 0.6300198244123478,
+        "precision_macro": 0.6057396342567445,
+        "predicted_distribution": {
+          "0": 263,
+          "1": 21
+        },
+        "recall_macro": 0.678921568627451,
+        "roc_auc": 0.9338235294117647,
+        "rows": 284,
+        "weighted_f1": 0.9293764284945014
+      },
+      "test_range": [
+        "2026-04-14",
+        "2026-04-15"
+      ],
+      "timestamp_utc": "2026-04-18T19:10:33.504653+00:00",
+      "train_range": [
+        "2026-04-06",
+        "2026-04-10"
+      ],
+      "training_metadata_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_a39ad13e/training_metadata.json",
+      "validation_metrics": {
+        "accuracy": 0.2564102564102564,
+        "actual_distribution": {
+          "0": 58,
+          "1": 20
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            2,
+            56
+          ],
+          [
+            2,
+            18
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": 3.575863815272161,
+          "score_buckets": [
+            {
+              "bucket": "(0.377, 0.743]",
+              "count": 16,
+              "mean_future_net_return_bps": 2.8473036470701776,
+              "mean_future_return_bps": 2.8473036470701776,
+              "mean_score": 0.5570244686660268
+            },
+            {
+              "bucket": "(0.743, 0.834]",
+              "count": 15,
+              "mean_future_net_return_bps": 2.650737316800401,
+              "mean_future_return_bps": 2.650737316800401,
+              "mean_score": 0.7955893417893733
+            },
+            {
+              "bucket": "(0.834, 0.958]",
+              "count": 16,
+              "mean_future_net_return_bps": 2.0309888703734575,
+              "mean_future_return_bps": 2.0309888703734575,
+              "mean_score": 0.8957628174902573
+            },
+            {
+              "bucket": "(0.958, 0.986]",
+              "count": 15,
+              "mean_future_net_return_bps": 0.6694376168387524,
+              "mean_future_return_bps": 0.6694376168387524,
+              "mean_score": 0.9710575244106802
+            },
+            {
+              "bucket": "(0.986, 0.999]",
+              "count": 16,
+              "mean_future_net_return_bps": 8.434252475806923,
+              "mean_future_return_bps": 8.434252475806923,
+              "mean_score": 0.9970395175343333
+            }
+          ],
+          "score_spread_bps": 5.221629076150302,
+          "top_decile_count": 8,
+          "top_decile_mean_future_return_bps": 8.797492891422463,
+          "top_decile_mean_net_return_bps": 8.797492891422463,
+          "top_signal_hit_rate": 1.0
+        },
+        "f1_macro": 0.2237474262182567,
+        "precision_macro": 0.3716216216216216,
+        "predicted_distribution": {
+          "0": 4,
+          "1": 74
+        },
+        "recall_macro": 0.4672413793103448,
+        "roc_auc": 0.7913793103448277,
+        "rows": 78,
+        "weighted_f1": 0.14617320451225735
+      },
+      "validation_range": [
+        "2026-04-13",
+        "2026-04-13"
+      ]
+    },
+    {
+      "artifact_dir": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_b131778d",
+      "artifact_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_b131778d/model.joblib",
+      "feature_columns": [
+        "last_price",
+        "bid",
+        "ask",
+        "spread",
+        "bid_size",
+        "ask_size",
+        "last_size",
+        "volume",
+        "mid_price",
+        "spread_bps",
+        "price_proxy",
+        "high_price_proxy",
+        "low_price_proxy",
+        "sma_short",
+        "sma_medium",
+        "sma_long",
+        "ema_short",
+        "ema_medium",
+        "ema_long",
+        "moving_average_distance_short_bps",
+        "moving_average_distance_medium_bps",
+        "moving_average_distance_long_bps",
+        "moving_average_slope_short_bps",
+        "moving_average_slope_medium_bps",
+        "moving_average_slope_long_bps",
+        "ma_crossover_short_long_bps",
+        "macd_line",
+        "macd_signal",
+        "macd_histogram",
+        "adx",
+        "plus_di",
+        "minus_di",
+        "rsi",
+        "roc_bps",
+        "momentum_simple_bps",
+        "stochastic_k",
+        "stochastic_d",
+        "williams_r",
+        "cci",
+        "true_range",
+        "atr",
+        "rolling_volatility_short_bps",
+        "rolling_volatility_medium_bps",
+        "rolling_volatility_long_bps",
+        "rolling_std_returns_short_bps",
+        "rolling_std_returns_medium_bps",
+        "rolling_std_returns_long_bps",
+        "bollinger_mid",
+        "bollinger_upper",
+        "bollinger_lower",
+        "bollinger_bandwidth_bps",
+        "zscore_price",
+        "orb_high",
+        "orb_low",
+        "orb_width",
+        "orb_width_bps",
+        "orb_range_width",
+        "orb_range_width_bps",
+        "orb_relative_price_position",
+        "breakout_distance",
+        "breakout_distance_bps",
+        "orb_range_complete",
+        "rolling_volume_mean",
+        "relative_volume",
+        "vwap",
+        "distance_to_vwap_bps",
+        "vwap_slope_bps",
+        "obv",
+        "volume_spike_flag",
+        "accumulation_distribution",
+        "mfi",
+        "rolling_spread_mean_bps",
+        "rolling_spread_std_bps",
+        "weighted_mid_price",
+        "imbalance",
+        "rolling_imbalance_mean",
+        "rolling_imbalance_std",
+        "delta_imbalance",
+        "total_depth",
+        "depth_ratio",
+        "microprice_proxy",
+        "minute_of_day",
+        "minutes_since_open",
+        "time_of_day_sin",
+        "time_of_day_cos",
+        "seconds_since_open",
+        "seconds_to_close",
+        "opening_session_flag",
+        "midday_flag",
+        "day_of_week",
+        "intraday_volume_percentile",
+        "intraday_spread_percentile",
+        "return_1_bps",
+        "return_short_bps",
+        "return_medium_bps",
+        "bid_ask_imbalance",
+        "micro_price",
+        "vwap_approx",
+        "spread_proxy_bps",
+        "slippage_proxy_bps",
+        "estimated_cost_bps"
+      ],
+      "feature_set": "hybrid_intraday",
+      "hyperparameters": {
+        "C": 1.0,
+        "class_weight": null,
+        "max_iter": 500
+      },
+      "metrics": {
+        "test": {
+          "accuracy": 0.9366197183098591,
+          "actual_distribution": {
+            "0": 272,
+            "1": 12
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              261,
+              11
+            ],
+            [
+              7,
+              5
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": -9.886405195493294,
+            "score_buckets": [
+              {
+                "bucket": "(-0.000999973, 1.14e-05]",
+                "count": 55,
+                "mean_future_net_return_bps": -8.642150805993762,
+                "mean_future_return_bps": -8.642150805993762,
+                "mean_score": 3.1243390227413306e-06
+              },
+              {
+                "bucket": "(1.14e-05, 0.000129]",
+                "count": 55,
+                "mean_future_net_return_bps": -4.293784152964907,
+                "mean_future_return_bps": -4.293784152964907,
+                "mean_score": 4.4767762616753106e-05
+              },
+              {
+                "bucket": "(0.000129, 0.00201]",
+                "count": 54,
+                "mean_future_net_return_bps": -3.1553831384504205,
+                "mean_future_return_bps": -3.1553831384504205,
+                "mean_score": 0.0006591788182807196
+              },
+              {
+                "bucket": "(0.00201, 0.0304]",
+                "count": 55,
+                "mean_future_net_return_bps": -2.2260731523154123,
+                "mean_future_return_bps": -2.2260731523154123,
+                "mean_score": 0.010059592902792548
+              },
+              {
+                "bucket": "(0.0304, 0.955]",
+                "count": 55,
+                "mean_future_net_return_bps": 1.2194656142298892,
+                "mean_future_return_bps": 1.2194656142298892,
+                "mean_score": 0.28390889001318537
+              }
+            ],
+            "score_spread_bps": 12.676370214988623,
+            "top_decile_count": 28,
+            "top_decile_mean_future_return_bps": 2.789965019495328,
+            "top_decile_mean_net_return_bps": 2.789965019495328,
+            "top_signal_hit_rate": 0.9642857142857143
+          },
+          "f1_macro": 0.6619047619047619,
+          "precision_macro": 0.6431902985074627,
+          "predicted_distribution": {
+            "0": 268,
+            "1": 16
+          },
+          "recall_macro": 0.6881127450980392,
+          "roc_auc": 0.9399509803921569,
+          "rows": 284,
+          "weighted_f1": 0.9409121395036888
+        },
+        "validation": {
+          "accuracy": 0.5128205128205128,
+          "actual_distribution": {
+            "0": 58,
+            "1": 20
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              25,
+              33
+            ],
+            [
+              5,
+              15
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": 3.3357989998225093,
+            "score_buckets": [
+              {
+                "bucket": "(0.0663, 0.331]",
+                "count": 16,
+                "mean_future_net_return_bps": 2.8566749902269613,
+                "mean_future_return_bps": 2.8566749902269613,
+                "mean_score": 0.18603554502288408
+              },
+              {
+                "bucket": "(0.331, 0.529]",
+                "count": 15,
+                "mean_future_net_return_bps": 2.514694672589444,
+                "mean_future_return_bps": 2.514694672589444,
+                "mean_score": 0.43574951881649565
+              },
+              {
+                "bucket": "(0.529, 0.816]",
+                "count": 16,
+                "mean_future_net_return_bps": 2.1491575061644457,
+                "mean_future_return_bps": 2.1491575061644457,
+                "mean_score": 0.6635145037463098
+              },
+              {
+                "bucket": "(0.816, 0.934]",
+                "count": 15,
+                "mean_future_net_return_bps": 0.2915157132042071,
+                "mean_future_return_bps": 0.2915157132042071,
+                "mean_score": 0.8903269166743935
+              },
+              {
+                "bucket": "(0.934, 0.998]",
+                "count": 16,
+                "mean_future_net_return_bps": 8.78855426046431,
+                "mean_future_return_bps": 8.78855426046431,
+                "mean_score": 0.9913714069375775
+              }
+            ],
+            "score_spread_bps": 5.461693891599955,
+            "top_decile_count": 8,
+            "top_decile_mean_future_return_bps": 8.797492891422465,
+            "top_decile_mean_net_return_bps": 8.797492891422465,
+            "top_signal_hit_rate": 1.0
+          },
+          "f1_macro": 0.5046791443850267,
+          "precision_macro": 0.5729166666666667,
+          "predicted_distribution": {
+            "0": 30,
+            "1": 48
+          },
+          "recall_macro": 0.5905172413793103,
+          "roc_auc": 0.7982758620689655,
+          "rows": 78,
+          "weighted_f1": 0.5356163444398739
+        }
+      },
+      "model_name": "logistic_regression",
+      "model_type": "logistic_regression",
+      "preprocessing_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_b131778d/preprocessing.joblib",
+      "ranking_score": 0.5046791443850267,
+      "registered_at": "2026-04-18T19:10:33.733404+00:00",
+      "run_id": "run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_b131778d",
+      "split_config": {
+        "dropna_target": true,
+        "min_rows": 120,
+        "min_test_rows": 20,
+        "min_train_rows": 60,
+        "min_unique_dates": 3,
+        "min_validation_rows": 20,
+        "strict_feature_validation": true,
+        "test_ratio": 0.15,
+        "train_ratio": 0.7,
+        "validation_ratio": 0.15
+      },
+      "symbols": [
+        "SPY"
+      ],
+      "target_config_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_b131778d/target_config.json",
+      "target_mode": "classification_binary",
+      "test_metrics": {
+        "accuracy": 0.9366197183098591,
+        "actual_distribution": {
+          "0": 272,
+          "1": 12
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            261,
+            11
+          ],
+          [
+            7,
+            5
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": -9.886405195493294,
+          "score_buckets": [
+            {
+              "bucket": "(-0.000999973, 1.14e-05]",
+              "count": 55,
+              "mean_future_net_return_bps": -8.642150805993762,
+              "mean_future_return_bps": -8.642150805993762,
+              "mean_score": 3.1243390227413306e-06
+            },
+            {
+              "bucket": "(1.14e-05, 0.000129]",
+              "count": 55,
+              "mean_future_net_return_bps": -4.293784152964907,
+              "mean_future_return_bps": -4.293784152964907,
+              "mean_score": 4.4767762616753106e-05
+            },
+            {
+              "bucket": "(0.000129, 0.00201]",
+              "count": 54,
+              "mean_future_net_return_bps": -3.1553831384504205,
+              "mean_future_return_bps": -3.1553831384504205,
+              "mean_score": 0.0006591788182807196
+            },
+            {
+              "bucket": "(0.00201, 0.0304]",
+              "count": 55,
+              "mean_future_net_return_bps": -2.2260731523154123,
+              "mean_future_return_bps": -2.2260731523154123,
+              "mean_score": 0.010059592902792548
+            },
+            {
+              "bucket": "(0.0304, 0.955]",
+              "count": 55,
+              "mean_future_net_return_bps": 1.2194656142298892,
+              "mean_future_return_bps": 1.2194656142298892,
+              "mean_score": 0.28390889001318537
+            }
+          ],
+          "score_spread_bps": 12.676370214988623,
+          "top_decile_count": 28,
+          "top_decile_mean_future_return_bps": 2.789965019495328,
+          "top_decile_mean_net_return_bps": 2.789965019495328,
+          "top_signal_hit_rate": 0.9642857142857143
+        },
+        "f1_macro": 0.6619047619047619,
+        "precision_macro": 0.6431902985074627,
+        "predicted_distribution": {
+          "0": 268,
+          "1": 16
+        },
+        "recall_macro": 0.6881127450980392,
+        "roc_auc": 0.9399509803921569,
+        "rows": 284,
+        "weighted_f1": 0.9409121395036888
+      },
+      "test_range": [
+        "2026-04-14",
+        "2026-04-15"
+      ],
+      "timestamp_utc": "2026-04-18T19:10:33.731873+00:00",
+      "train_range": [
+        "2026-04-06",
+        "2026-04-10"
+      ],
+      "training_metadata_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_b131778d/training_metadata.json",
+      "validation_metrics": {
+        "accuracy": 0.5128205128205128,
+        "actual_distribution": {
+          "0": 58,
+          "1": 20
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            25,
+            33
+          ],
+          [
+            5,
+            15
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": 3.3357989998225093,
+          "score_buckets": [
+            {
+              "bucket": "(0.0663, 0.331]",
+              "count": 16,
+              "mean_future_net_return_bps": 2.8566749902269613,
+              "mean_future_return_bps": 2.8566749902269613,
+              "mean_score": 0.18603554502288408
+            },
+            {
+              "bucket": "(0.331, 0.529]",
+              "count": 15,
+              "mean_future_net_return_bps": 2.514694672589444,
+              "mean_future_return_bps": 2.514694672589444,
+              "mean_score": 0.43574951881649565
+            },
+            {
+              "bucket": "(0.529, 0.816]",
+              "count": 16,
+              "mean_future_net_return_bps": 2.1491575061644457,
+              "mean_future_return_bps": 2.1491575061644457,
+              "mean_score": 0.6635145037463098
+            },
+            {
+              "bucket": "(0.816, 0.934]",
+              "count": 15,
+              "mean_future_net_return_bps": 0.2915157132042071,
+              "mean_future_return_bps": 0.2915157132042071,
+              "mean_score": 0.8903269166743935
+            },
+            {
+              "bucket": "(0.934, 0.998]",
+              "count": 16,
+              "mean_future_net_return_bps": 8.78855426046431,
+              "mean_future_return_bps": 8.78855426046431,
+              "mean_score": 0.9913714069375775
+            }
+          ],
+          "score_spread_bps": 5.461693891599955,
+          "top_decile_count": 8,
+          "top_decile_mean_future_return_bps": 8.797492891422465,
+          "top_decile_mean_net_return_bps": 8.797492891422465,
+          "top_signal_hit_rate": 1.0
+        },
+        "f1_macro": 0.5046791443850267,
+        "precision_macro": 0.5729166666666667,
+        "predicted_distribution": {
+          "0": 30,
+          "1": 48
+        },
+        "recall_macro": 0.5905172413793103,
+        "roc_auc": 0.7982758620689655,
+        "rows": 78,
+        "weighted_f1": 0.5356163444398739
+      },
+      "validation_range": [
+        "2026-04-13",
+        "2026-04-13"
+      ]
+    },
+    {
+      "artifact_dir": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_4cc83ed0",
+      "artifact_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_4cc83ed0/model.joblib",
+      "feature_columns": [
+        "last_price",
+        "bid",
+        "ask",
+        "spread",
+        "bid_size",
+        "ask_size",
+        "last_size",
+        "volume",
+        "mid_price",
+        "spread_bps",
+        "price_proxy",
+        "high_price_proxy",
+        "low_price_proxy",
+        "sma_short",
+        "sma_medium",
+        "sma_long",
+        "ema_short",
+        "ema_medium",
+        "ema_long",
+        "moving_average_distance_short_bps",
+        "moving_average_distance_medium_bps",
+        "moving_average_distance_long_bps",
+        "moving_average_slope_short_bps",
+        "moving_average_slope_medium_bps",
+        "moving_average_slope_long_bps",
+        "ma_crossover_short_long_bps",
+        "macd_line",
+        "macd_signal",
+        "macd_histogram",
+        "adx",
+        "plus_di",
+        "minus_di",
+        "rsi",
+        "roc_bps",
+        "momentum_simple_bps",
+        "stochastic_k",
+        "stochastic_d",
+        "williams_r",
+        "cci",
+        "true_range",
+        "atr",
+        "rolling_volatility_short_bps",
+        "rolling_volatility_medium_bps",
+        "rolling_volatility_long_bps",
+        "rolling_std_returns_short_bps",
+        "rolling_std_returns_medium_bps",
+        "rolling_std_returns_long_bps",
+        "bollinger_mid",
+        "bollinger_upper",
+        "bollinger_lower",
+        "bollinger_bandwidth_bps",
+        "zscore_price",
+        "orb_high",
+        "orb_low",
+        "orb_width",
+        "orb_width_bps",
+        "orb_range_width",
+        "orb_range_width_bps",
+        "orb_relative_price_position",
+        "breakout_distance",
+        "breakout_distance_bps",
+        "orb_range_complete",
+        "rolling_volume_mean",
+        "relative_volume",
+        "vwap",
+        "distance_to_vwap_bps",
+        "vwap_slope_bps",
+        "obv",
+        "volume_spike_flag",
+        "accumulation_distribution",
+        "mfi",
+        "rolling_spread_mean_bps",
+        "rolling_spread_std_bps",
+        "weighted_mid_price",
+        "imbalance",
+        "rolling_imbalance_mean",
+        "rolling_imbalance_std",
+        "delta_imbalance",
+        "total_depth",
+        "depth_ratio",
+        "microprice_proxy",
+        "minute_of_day",
+        "minutes_since_open",
+        "time_of_day_sin",
+        "time_of_day_cos",
+        "seconds_since_open",
+        "seconds_to_close",
+        "opening_session_flag",
+        "midday_flag",
+        "day_of_week",
+        "intraday_volume_percentile",
+        "intraday_spread_percentile",
+        "return_1_bps",
+        "return_short_bps",
+        "return_medium_bps",
+        "bid_ask_imbalance",
+        "micro_price",
+        "vwap_approx",
+        "spread_proxy_bps",
+        "slippage_proxy_bps",
+        "estimated_cost_bps"
+      ],
+      "feature_set": "hybrid_intraday",
+      "hyperparameters": {
+        "C": 1.0,
+        "class_weight": "balanced",
+        "max_iter": 500
+      },
+      "metrics": {
+        "test": {
+          "accuracy": 0.9190140845070423,
+          "actual_distribution": {
+            "0": 272,
+            "1": 12
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              254,
+              18
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": -9.720630627834606,
+            "score_buckets": [
+              {
+                "bucket": "(-0.0009999971000000001, 4.37e-06]",
+                "count": 55,
+                "mean_future_net_return_bps": -8.53744429149935,
+                "mean_future_return_bps": -8.53744429149935,
+                "mean_score": 1.3931255433713696e-06
+              },
+              {
+                "bucket": "(4.37e-06, 0.000161]",
+                "count": 55,
+                "mean_future_net_return_bps": -4.389743980656569,
+                "mean_future_return_bps": -4.389743980656569,
+                "mean_score": 4.291476596130927e-05
+              },
+              {
+                "bucket": "(0.000161, 0.0091]",
+                "count": 54,
+                "mean_future_net_return_bps": -2.814186022482937,
+                "mean_future_return_bps": -2.814186022482937,
+                "mean_score": 0.0023986313732202477
+              },
+              {
+                "bucket": "(0.0091, 0.102]",
+                "count": 55,
+                "mean_future_net_return_bps": -2.118946478387068,
+                "mean_future_return_bps": -2.118946478387068,
+                "mean_score": 0.03720780567503746
+              },
+              {
+                "bucket": "(0.102, 0.994]",
+                "count": 55,
+                "mean_future_net_return_bps": 0.7685987214579925,
+                "mean_future_return_bps": 0.7685987214579925,
+                "mean_score": 0.5066145051858295
+              }
+            ],
+            "score_spread_bps": 12.341182927516856,
+            "top_decile_count": 28,
+            "top_decile_mean_future_return_bps": 2.620552299682251,
+            "top_decile_mean_net_return_bps": 2.620552299682251,
+            "top_signal_hit_rate": 0.9285714285714286
+          },
+          "f1_macro": 0.6675319387183793,
+          "precision_macro": 0.6303474903474904,
+          "predicted_distribution": {
+            "0": 259,
+            "1": 25
+          },
+          "recall_macro": 0.758578431372549,
+          "roc_auc": 0.9381127450980392,
+          "rows": 284,
+          "weighted_f1": 0.9322499869169718
+        },
+        "validation": {
+          "accuracy": 0.2564102564102564,
+          "actual_distribution": {
+            "0": 58,
+            "1": 20
+          },
+          "class_labels": [
+            0,
+            1
+          ],
+          "confusion_matrix": [
+            [
+              0,
+              58
+            ],
+            [
+              0,
+              20
+            ]
+          ],
+          "economics": {
+            "bottom_decile_mean_future_return_bps": 3.575863815272161,
+            "score_buckets": [
+              {
+                "bucket": "(0.507, 0.806]",
+                "count": 16,
+                "mean_future_net_return_bps": 2.822683009404679,
+                "mean_future_return_bps": 2.822683009404679,
+                "mean_score": 0.6376616294169051
+              },
+              {
+                "bucket": "(0.806, 0.885]",
+                "count": 15,
+                "mean_future_net_return_bps": 2.681722688215239,
+                "mean_future_return_bps": 2.681722688215239,
+                "mean_score": 0.842999513586696
+              },
+              {
+                "bucket": "(0.885, 0.975]",
+                "count": 16,
+                "mean_future_net_return_bps": 2.1269389390094076,
+                "mean_future_return_bps": 2.1269389390094076,
+                "mean_score": 0.935130877110588
+              },
+              {
+                "bucket": "(0.975, 0.994]",
+                "count": 15,
+                "mean_future_net_return_bps": 0.5623675190554319,
+                "mean_future_return_bps": 0.5623675190554319,
+                "mean_score": 0.9852670473927749
+              },
+              {
+                "bucket": "(0.994, 1.0]",
+                "count": 16,
+                "mean_future_net_return_bps": 8.434252475806923,
+                "mean_future_return_bps": 8.434252475806923,
+                "mean_score": 0.9980246754734772
+              }
+            ],
+            "score_spread_bps": 5.221629076150304,
+            "top_decile_count": 8,
+            "top_decile_mean_future_return_bps": 8.797492891422465,
+            "top_decile_mean_net_return_bps": 8.797492891422465,
+            "top_signal_hit_rate": 1.0
+          },
+          "f1_macro": 0.20408163265306123,
+          "precision_macro": 0.1282051282051282,
+          "predicted_distribution": {
+            "1": 78
+          },
+          "recall_macro": 0.5,
+          "roc_auc": 0.7931034482758621,
+          "rows": 78,
+          "weighted_f1": 0.10465724751439037
+        }
+      },
+      "model_name": "logistic_regression",
+      "model_type": "logistic_regression",
+      "preprocessing_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_4cc83ed0/preprocessing.joblib",
+      "ranking_score": 0.20408163265306123,
+      "registered_at": "2026-04-18T19:10:33.971200+00:00",
+      "run_id": "run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_4cc83ed0",
+      "split_config": {
+        "dropna_target": true,
+        "min_rows": 120,
+        "min_test_rows": 20,
+        "min_train_rows": 60,
+        "min_unique_dates": 3,
+        "min_validation_rows": 20,
+        "strict_feature_validation": true,
+        "test_ratio": 0.15,
+        "train_ratio": 0.7,
+        "validation_ratio": 0.15
+      },
+      "symbols": [
+        "SPY"
+      ],
+      "target_config_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_4cc83ed0/target_config.json",
+      "target_mode": "classification_binary",
+      "test_metrics": {
+        "accuracy": 0.9190140845070423,
+        "actual_distribution": {
+          "0": 272,
+          "1": 12
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            254,
+            18
+          ],
+          [
+            5,
+            7
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": -9.720630627834606,
+          "score_buckets": [
+            {
+              "bucket": "(-0.0009999971000000001, 4.37e-06]",
+              "count": 55,
+              "mean_future_net_return_bps": -8.53744429149935,
+              "mean_future_return_bps": -8.53744429149935,
+              "mean_score": 1.3931255433713696e-06
+            },
+            {
+              "bucket": "(4.37e-06, 0.000161]",
+              "count": 55,
+              "mean_future_net_return_bps": -4.389743980656569,
+              "mean_future_return_bps": -4.389743980656569,
+              "mean_score": 4.291476596130927e-05
+            },
+            {
+              "bucket": "(0.000161, 0.0091]",
+              "count": 54,
+              "mean_future_net_return_bps": -2.814186022482937,
+              "mean_future_return_bps": -2.814186022482937,
+              "mean_score": 0.0023986313732202477
+            },
+            {
+              "bucket": "(0.0091, 0.102]",
+              "count": 55,
+              "mean_future_net_return_bps": -2.118946478387068,
+              "mean_future_return_bps": -2.118946478387068,
+              "mean_score": 0.03720780567503746
+            },
+            {
+              "bucket": "(0.102, 0.994]",
+              "count": 55,
+              "mean_future_net_return_bps": 0.7685987214579925,
+              "mean_future_return_bps": 0.7685987214579925,
+              "mean_score": 0.5066145051858295
+            }
+          ],
+          "score_spread_bps": 12.341182927516856,
+          "top_decile_count": 28,
+          "top_decile_mean_future_return_bps": 2.620552299682251,
+          "top_decile_mean_net_return_bps": 2.620552299682251,
+          "top_signal_hit_rate": 0.9285714285714286
+        },
+        "f1_macro": 0.6675319387183793,
+        "precision_macro": 0.6303474903474904,
+        "predicted_distribution": {
+          "0": 259,
+          "1": 25
+        },
+        "recall_macro": 0.758578431372549,
+        "roc_auc": 0.9381127450980392,
+        "rows": 284,
+        "weighted_f1": 0.9322499869169718
+      },
+      "test_range": [
+        "2026-04-14",
+        "2026-04-15"
+      ],
+      "timestamp_utc": "2026-04-18T19:10:33.969145+00:00",
+      "train_range": [
+        "2026-04-06",
+        "2026-04-10"
+      ],
+      "training_metadata_path": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_4cc83ed0/training_metadata.json",
+      "validation_metrics": {
+        "accuracy": 0.2564102564102564,
+        "actual_distribution": {
+          "0": 58,
+          "1": 20
+        },
+        "class_labels": [
+          0,
+          1
+        ],
+        "confusion_matrix": [
+          [
+            0,
+            58
+          ],
+          [
+            0,
+            20
+          ]
+        ],
+        "economics": {
+          "bottom_decile_mean_future_return_bps": 3.575863815272161,
+          "score_buckets": [
+            {
+              "bucket": "(0.507, 0.806]",
+              "count": 16,
+              "mean_future_net_return_bps": 2.822683009404679,
+              "mean_future_return_bps": 2.822683009404679,
+              "mean_score": 0.6376616294169051
+            },
+            {
+              "bucket": "(0.806, 0.885]",
+              "count": 15,
+              "mean_future_net_return_bps": 2.681722688215239,
+              "mean_future_return_bps": 2.681722688215239,
+              "mean_score": 0.842999513586696
+            },
+            {
+              "bucket": "(0.885, 0.975]",
+              "count": 16,
+              "mean_future_net_return_bps": 2.1269389390094076,
+              "mean_future_return_bps": 2.1269389390094076,
+              "mean_score": 0.935130877110588
+            },
+            {
+              "bucket": "(0.975, 0.994]",
+              "count": 15,
+              "mean_future_net_return_bps": 0.5623675190554319,
+              "mean_future_return_bps": 0.5623675190554319,
+              "mean_score": 0.9852670473927749
+            },
+            {
+              "bucket": "(0.994, 1.0]",
+              "count": 16,
+              "mean_future_net_return_bps": 8.434252475806923,
+              "mean_future_return_bps": 8.434252475806923,
+              "mean_score": 0.9980246754734772
+            }
+          ],
+          "score_spread_bps": 5.221629076150304,
+          "top_decile_count": 8,
+          "top_decile_mean_future_return_bps": 8.797492891422465,
+          "top_decile_mean_net_return_bps": 8.797492891422465,
+          "top_signal_hit_rate": 1.0
+        },
+        "f1_macro": 0.20408163265306123,
+        "precision_macro": 0.1282051282051282,
+        "predicted_distribution": {
+          "1": 78
+        },
+        "recall_macro": 0.5,
+        "roc_auc": 0.7931034482758621,
+        "rows": 78,
+        "weighted_f1": 0.10465724751439037
+      },
+      "validation_range": [
+        "2026-04-13",
+        "2026-04-13"
+      ]
+    }
+  ]
 }

@@ -1,0 +1,37 @@
+defaults:
+  performance_thresholds:
+    min_trades_required: 5
+    min_win_rate: 0.45
+    max_drawdown: 500.0
+    min_expectancy: 0.0
+    min_total_pnl: 0.0
+  drift_thresholds:
+    feature_psi_warning: 0.2
+    feature_psi_critical: 0.35
+    prediction_psi_warning: 0.2
+    label_psi_warning: 0.2
+    mean_shift_sigma_warning: 1.5
+    degenerate_output_std_floor: 1.0e-6
+  evaluation_window:
+    reference_days: 5
+    compare_run_limit: 10
+    min_samples_for_drift: 25
+  report_paths:
+    report_dir: data/reports/phase8
+    economic_leaderboard_path: data/reports/phase5/economic_leaderboard_latest.csv
+    compare_runs_dir: data/reports/phase8/comparisons
+  alert_flags:
+    alert_on_negative_pnl: true
+    alert_on_low_win_rate: true
+    alert_on_high_drawdown: true
+    alert_on_feature_drift: true
+    alert_on_prediction_drift: true
+    alert_on_label_drift: false
+    alert_on_degenerate_outputs: true
+  auto_generate_after_phase7: true
+
+environments:
+  development:
+    auto_generate_after_phase7: true
+  deploy:
+    auto_generate_after_phase7: true

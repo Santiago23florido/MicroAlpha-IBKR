@@ -17,6 +17,7 @@ from execution.position_manager import PositionManager
 from labels.dataset_builder import load_labeled_data
 from models.inference import OperationalInferenceEngine
 from monitoring.logging import setup_logger
+from reporting.report_bundle import generate_report
 from risk.risk_engine import OperationalRiskEngine, OperationalRiskState
 from storage.decision_logs import DecisionLogStore
 from strategy.decision_engine import DecisionEngine
@@ -263,6 +264,12 @@ def _execute_phase7_run(
             "risk_failures": final_decision.get("risk_failures", []),
             "predicted_quantiles": final_decision.get("predicted_quantiles", {}),
             "future_net_return_bps": _coerce_optional_float(row_data.get("future_net_return_bps")),
+            "spread_bps_observed": _coerce_optional_float(row_data.get("spread_bps")),
+            "estimated_cost_bps_observed": _coerce_optional_float(row_data.get("estimated_cost_bps")),
+            "relative_volume_observed": _coerce_optional_float(row_data.get("relative_volume")),
+            "volume_observed": _coerce_optional_float(row_data.get("volume")),
+            "day_of_week_observed": row_data.get("day_of_week"),
+            "minute_of_day_observed": _coerce_optional_float(row_data.get("minute_of_day")),
             "execution_status": execution_status,
             "execution_error": execution_error,
             "order_id": None if execution_result is None else execution_result.order.order_id,
@@ -296,6 +303,7 @@ def _execute_phase7_run(
         )
 
     return _write_phase7_reports(
+        settings=settings,
         phase7_report_dir=Path(phase7.logging.report_dir),
         run_label=run_label,
         records=records,
@@ -313,6 +321,7 @@ def _execute_phase7_run(
 
 def _write_phase7_reports(
     *,
+    settings: Settings,
     phase7_report_dir: Path,
     run_label: str,
     records: list[dict[str, Any]],
@@ -362,6 +371,19 @@ def _write_phase7_reports(
         "mean_future_net_return_bps": _frame_mean(details_frame, "future_net_return_bps"),
     }
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    try:
+        phase8_report = generate_report(
+            settings,
+            summary_path=summary_path,
+            parquet_path=parquet_path,
+            auto_generated=True,
+        )
+        summary["phase8_report"] = phase8_report
+        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Phase8 auto report generation failed for %s: %s", run_label, exc)
+        summary["phase8_report_error"] = str(exc)
+        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
     logger.info(
         "Phase7 %s complete: rows=%s orders_attempted=%s accepted=%s summary=%s",
         run_label,
