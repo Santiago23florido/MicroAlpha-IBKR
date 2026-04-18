@@ -2,11 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 
-def build_trade_report(trades: list[dict[str, Any]]) -> dict[str, Any]:
-    total = len(trades)
-    by_event: dict[str, int] = {}
-    for trade in trades:
-        event_type = str(trade.get("event_type", "unknown"))
-        by_event[event_type] = by_event.get(event_type, 0) + 1
-    return {"total_trades": total, "events": by_event}
+from evaluation.performance import analyze_trade_logs
+
+
+def build_trade_report(
+    decision_frame: pd.DataFrame,
+    *,
+    orders: list[dict[str, Any]] | None = None,
+    fills: list[dict[str, Any]] | None = None,
+    reports: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    analysis = analyze_trade_logs(
+        decision_frame,
+        orders=orders or [],
+        fills=fills or [],
+        reports=reports or [],
+    )
+    return analysis["summary"]

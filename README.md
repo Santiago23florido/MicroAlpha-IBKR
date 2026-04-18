@@ -1,13 +1,13 @@
-# MicroAlpha-IBKR Phase 7: Paper Execution and Order Management on Top of the LAN Modeling Pipeline
+# MicroAlpha-IBKR Phase 8: Evaluation, Monitoring, Drift Detection, and Paper Execution on Top of the LAN Modeling Pipeline
 
 ## Purpose
 
-This repository now supports the Phase 7 operational layer on top of the Phase 5 and Phase 6 workflow while keeping the dual-machine architecture intact:
+This repository now supports the Phase 8 evaluation and monitoring layer on top of the Phase 5, Phase 6, and Phase 7 workflow while keeping the dual-machine architecture intact:
 
 - `PC2`: collector and operational raw data source
 - `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-Phase 7 still does **not** send real broker orders. It connects:
+Phase 8 still does **not** send real broker orders. It connects:
 
 - feature stores
 - one explicitly selected active model from Phase 5
@@ -20,6 +20,11 @@ Phase 7 still does **not** send real broker orders. It connects:
 - paper positions and PnL tracking
 - structured journals for orders, fills, positions, and PnL
 - offline and session runners with mock paper routing
+- economic performance evaluation
+- signal quality analysis by score, probability, and buckets
+- drift detection for data, prediction outputs, and labels
+- run-to-run comparison and economic leaderboard reporting
+- automatic Phase 8 reports after paper runs
 
 The active model is visible in `config/active_model.yaml`, not hidden in code.
 
@@ -28,7 +33,7 @@ Important operational note:
 - the currently selected models were trained with simulated data and are temporary
 - Phase 7 does not hardcode those artifacts anywhere in the execution stack
 - future retraining should only require registering new artifacts and switching the active model selection
-- the Phase 7 execution code depends on the active-model interface and normalized decisions, not on a specific model file
+- the execution and evaluation code depends on the active-model interface and normalized decisions, not on a specific model file
 
 ## Architecture
 
@@ -51,6 +56,9 @@ Important operational note:
 - runs inference, decision, and risk on normalized outputs
 - routes approved decisions into the Phase 7 paper/mock execution layer
 - persists orders, fills, positions, PnL, and execution state for later audit
+- evaluates the resulting economic behavior and signal quality
+- tracks drift between current and historical feature / prediction distributions
+- writes structured Phase 8 reports for diagnostics and model comparison
 
 ## Project Structure
 
@@ -64,6 +72,7 @@ MicroAlpha-IBKR/
 │   ├── active_model.yaml
 │   ├── phase6.yaml
 │   ├── phase7.yaml
+│   ├── phase8.yaml
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
@@ -72,6 +81,11 @@ MicroAlpha-IBKR/
 ├── engine/
 │   ├── phase6.py
 │   └── phase7.py
+├── evaluation/
+│   ├── io.py
+│   ├── performance.py
+│   ├── signal_analysis.py
+│   └── compare_runs.py
 ├── execution/
 │   ├── models.py
 │   ├── order_state_machine.py
@@ -81,6 +95,8 @@ MicroAlpha-IBKR/
 │   ├── backend.py
 │   ├── position_manager.py
 │   └── journal.py
+├── monitoring/
+│   └── drift.py
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
@@ -93,8 +109,13 @@ MicroAlpha-IBKR/
 │       ├── phase5/
 │       ├── phase6/
 │       ├── phase7/
+│       ├── phase8/
 │       ├── execution/
 │       └── decisions/
+├── reporting/
+│   ├── performance_report.py
+│   ├── trade_report.py
+│   └── report_bundle.py
 ├── features/
 │   ├── definitions.py
 │   ├── registry.py
@@ -138,6 +159,12 @@ MicroAlpha-IBKR/
 │   ├── run_paper_session.py
 │   ├── execution_status.py
 │   ├── show_execution_backend.py
+│   ├── evaluate_performance.py
+│   ├── analyze_signals.py
+│   ├── detect_drift.py
+│   ├── compare_runs.py
+│   ├── generate_report.py
+│   ├── full_evaluation_run.py
 │   └── risk_check.py
 └── tests/
 ```
@@ -234,6 +261,17 @@ Phase 7 adds:
 8. execution journal for orders, fills, positions, and PnL
 9. execution status and backend status commands
 10. offline and session paper runners that preserve the active-model interface
+
+Phase 8 adds:
+
+1. performance engine with economic metrics per trade and aggregated
+2. segmented analysis by score, probability, expected return, symbol, spread, and volume
+3. signal quality and calibration diagnostics
+4. trade-log analysis across decisions, orders, fills, and reports
+5. drift detection for data, model outputs, and offline labels
+6. structured report bundles in JSON, CSV, and Parquet
+7. run comparison and economic leaderboard updates
+8. automatic post-run reporting integrated into the paper execution pipeline
 
 ### Feature Registry
 
@@ -505,6 +543,17 @@ python app.py run-paper-sim-offline --symbols SPY --limit 200
 python app.py run-paper-session --symbols SPY --latest-per-symbol 2
 ```
 
+### Phase 8 Evaluation and Monitoring Commands
+
+```bash
+python app.py evaluate-performance --summary-path data/reports/phase7/<summary>.json
+python app.py analyze-signals --summary-path data/reports/phase7/<summary>.json
+python app.py detect-drift --summary-path data/reports/phase7/<summary>.json
+python app.py compare-runs
+python app.py generate-report --summary-path data/reports/phase7/<summary>.json
+python app.py full-evaluation-run --summary-path data/reports/phase7/<summary>.json
+```
+
 ## Active Model Selection
 
 The default operational model is stored in:
@@ -644,6 +693,49 @@ python app.py run-paper-session --symbols SPY --latest-per-symbol 2
 
 This command uses the same stack but only over the latest rows per symbol. It is the current skeleton for the future operational paper session.
 
+Phase 8 report generation:
+
+```bash
+python app.py generate-report --summary-path data/reports/phase7/paper_session_summary_<timestamp>.json
+```
+
+This command:
+
+1. loads the Phase 7 parquet and summary outputs
+2. computes per-trade and aggregated economic metrics
+3. analyzes signals by score and probability buckets
+4. checks data / prediction / label drift against recent history
+5. audits orders, fills, and execution reports
+6. writes a structured report bundle under `data/reports/phase8/`
+7. updates the economic leaderboard for cross-run comparison
+
+## Interpreting Phase 8 Reports
+
+The main report bundle lives under `data/reports/phase8/<phase7_run_label>/` and includes:
+
+- `run_report.json`
+- `metrics_report.json`
+- `performance_summary.json`
+- `signal_quality.json`
+- `drift_report.json`
+- `trade_analysis.json`
+- segment tables such as `score_deciles.csv`, `probability_deciles.csv`, `symbol.csv`, `spread_bucket.csv`
+
+Use the reports this way:
+
+- start with `performance_summary.json` to check total PnL, expectancy, win rate, profit factor, and drawdown
+- inspect segment tables to see whether better scores or probabilities actually map to better outcomes
+- treat monotonic or near-monotonic score buckets as evidence that the ranking signal may contain edge
+- review `drift_report.json` before trusting a good or bad session, because distribution shifts can invalidate comparisons
+- use `trade_analysis.json` to spot order rejects, execution inconsistencies, or journaling gaps
+- compare `run_report.json` files across sessions with `compare-runs` to rank runs by PnL, Sharpe, and drawdown
+
+Practical edge heuristic:
+
+- positive net PnL alone is not enough
+- the system is more credible when expectancy is positive, drawdown is bounded, score buckets improve from low to high, and drift remains contained
+- if top buckets do not outperform lower buckets, the model may be predicting noise rather than tradable edge
+
 ### Examples
 
 Run one distribution-oriented comparison:
@@ -753,6 +845,9 @@ The pipeline fails clearly when:
 - Binary classification targets can only express `LONG` or `NO_TRADE` cleanly; they are not a true short target.
 - The session runner currently operates on the latest available feature rows, not on a live streaming feature service.
 - The mock backend fills synchronously inside the run; it is not yet a persistent asynchronous broker event loop.
+- Phase 8 drift thresholds are simple heuristics; PSI and mean-shift warnings are diagnostic, not proof by themselves.
+- Small sample runs can generate incomplete trade statistics and weak calibration analysis.
+- Current economic metrics depend on mock fills and simulated costs, not on real broker paper fills yet.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
 
@@ -764,5 +859,6 @@ The next phase should build on this by adding:
 - asynchronous order/fill reconciliation with broker callbacks
 - broker-native order ids and cancel/replace flows
 - stronger session state and reconciliation across process restarts
-- monitoring and drift checks
 - promotion rules for switching the active model safely
+- alert routing outside files, such as email, chat, or dashboard sinks
+- tighter validation against real paper fills and real-time feature drift
