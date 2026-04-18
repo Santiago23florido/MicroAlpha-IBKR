@@ -18,6 +18,7 @@ from config import Settings, load_settings
 from config.phase6 import set_active_model_selection
 from deployment.lan_sync import pull_from_pc2
 from engine.phase6 import risk_check, run_decisions_offline, run_session, show_active_model
+from engine.phase7 import execution_status, run_paper_session, run_paper_sim_offline, show_execution_backend
 from engine.runtime import RuntimeServices, build_runtime
 from features.feature_pipeline import (
     inspect_feature_dependencies_for_build,
@@ -166,6 +167,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the currently configured Phase 6 active model selection and the artifact files it depends on.",
     )
 
+    subparsers.add_parser(
+        "show-execution-backend",
+        help="Show the configured Phase 7 execution backend and the active paper-execution settings.",
+    )
+
+    execution_status_parser = subparsers.add_parser(
+        "execution-status",
+        help="Show the current Phase 7 execution state, active backend, positions, and recent order/fill activity.",
+    )
+    execution_status_parser.add_argument("--limit", type=int, help="How many recent orders/fills/reports to include.")
+
     set_active_parser = subparsers.add_parser(
         "set-active-model",
         help="Set the Phase 6 active model selection by run id, artifact directory, or model name.",
@@ -185,6 +197,18 @@ def build_parser() -> argparse.ArgumentParser:
     offline_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     offline_parser.add_argument("--label-root", help="Override the label parquet root for offline realized-outcome joins.")
     offline_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    paper_offline_parser = subparsers.add_parser(
+        "run-paper-sim-offline",
+        help="Load historical features, run Phase 6 inference + decision + risk, then route approved decisions through the Phase 7 paper/mock execution layer.",
+    )
+    paper_offline_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    paper_offline_parser.add_argument("--start-date", help="Filter data from this session date (YYYY-MM-DD).")
+    paper_offline_parser.add_argument("--end-date", help="Filter data until this session date (YYYY-MM-DD).")
+    paper_offline_parser.add_argument("--limit", type=int, help="Only evaluate the latest N rows after filtering.")
+    paper_offline_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    paper_offline_parser.add_argument("--label-root", help="Override the label parquet root for offline realized-outcome joins.")
+    paper_offline_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
 
     subparsers.add_parser(
         "risk-check",
@@ -257,6 +281,15 @@ def build_parser() -> argparse.ArgumentParser:
     session_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     session_parser.add_argument("--latest-per-symbol", type=int, default=1, help="How many latest rows per symbol to evaluate.")
     session_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    paper_session_parser = subparsers.add_parser(
+        "run-paper-session",
+        help="Run one operational paper/mock session cycle through inference, decision, risk, order management, fills, and journaling.",
+    )
+    paper_session_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    paper_session_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    paper_session_parser.add_argument("--latest-per-symbol", type=int, help="How many latest rows per symbol to evaluate.")
+    paper_session_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
 
     dashboard_parser = subparsers.add_parser(
         "dashboard",
@@ -485,6 +518,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print_result(show_active_model(settings))
             return 0
 
+        if args.command == "show-execution-backend":
+            print_result(show_execution_backend(settings))
+            return 0
+
+        if args.command == "execution-status":
+            print_result(execution_status(settings, limit=args.limit))
+            return 0
+
         if args.command == "set-active-model":
             if not any([args.run_id, args.artifact_dir, args.model_name]):
                 print_result(
@@ -507,6 +548,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "run-decisions-offline":
             print_result(
                 run_decisions_offline(
+                    settings,
+                    symbols=args.symbols,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    limit=args.limit,
+                    feature_root=args.feature_root,
+                    label_root=args.label_root,
+                    decision_log_path=args.decision_log_path,
+                )
+            )
+            return 0
+
+        if args.command == "run-paper-sim-offline":
+            print_result(
+                run_paper_sim_offline(
                     settings,
                     symbols=args.symbols,
                     start_date=args.start_date,
@@ -562,6 +618,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     latest_per_symbol=args.latest_per_symbol,
                     decision_log_path=args.decision_log_path,
                     execute_requested=args.paper,
+                )
+            )
+            return 0
+
+        if args.command == "run-paper-session":
+            print_result(
+                run_paper_session(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    latest_per_symbol=args.latest_per_symbol,
+                    decision_log_path=args.decision_log_path,
                 )
             )
             return 0
