@@ -1,23 +1,34 @@
-# MicroAlpha-IBKR Phase 6: Inference, Decision, and Risk on Top of the LAN Modeling Pipeline
+# MicroAlpha-IBKR Phase 7: Paper Execution and Order Management on Top of the LAN Modeling Pipeline
 
 ## Purpose
 
-This repository now supports the Phase 6 operational layer on top of the Phase 5 modeling workflow while keeping the dual-machine architecture intact:
+This repository now supports the Phase 7 operational layer on top of the Phase 5 and Phase 6 workflow while keeping the dual-machine architecture intact:
 
 - `PC2`: collector and operational raw data source
-- `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, and operational risk checks
+- `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-Phase 6 still does **not** send real orders. It connects:
+Phase 7 still does **not** send real broker orders. It connects:
 
 - feature stores
 - one explicitly selected active model from Phase 5
 - a normalized inference layer
 - a decision engine
 - a risk engine
-- structured decision logs
-- offline and session runners without order routing
+- an order manager
+- a paper/mock execution backend
+- a configurable fill simulator
+- paper positions and PnL tracking
+- structured journals for orders, fills, positions, and PnL
+- offline and session runners with mock paper routing
 
 The active model is visible in `config/active_model.yaml`, not hidden in code.
+
+Important operational note:
+
+- the currently selected models were trained with simulated data and are temporary
+- Phase 7 does not hardcode those artifacts anywhere in the execution stack
+- future retraining should only require registering new artifacts and switching the active model selection
+- the Phase 7 execution code depends on the active-model interface and normalized decisions, not on a specific model file
 
 ## Architecture
 
@@ -36,6 +47,10 @@ The active model is visible in `config/active_model.yaml`, not hidden in code.
 - builds modeling datasets with temporal splits
 - trains multiple model variants
 - evaluates them and writes a leaderboard plus artifacts
+- resolves one active model from config/registry
+- runs inference, decision, and risk on normalized outputs
+- routes approved decisions into the Phase 7 paper/mock execution layer
+- persists orders, fills, positions, PnL, and execution state for later audit
 
 ## Project Structure
 
@@ -48,13 +63,24 @@ MicroAlpha-IBKR/
 │   ├── modeling.yaml
 │   ├── active_model.yaml
 │   ├── phase6.yaml
+│   ├── phase7.yaml
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
 ├── deployment/
 │   └── lan_sync.py
 ├── engine/
-│   └── phase6.py
+│   ├── phase6.py
+│   └── phase7.py
+├── execution/
+│   ├── models.py
+│   ├── order_state_machine.py
+│   ├── order_manager.py
+│   ├── fill_simulator.py
+│   ├── paper_broker_mock.py
+│   ├── backend.py
+│   ├── position_manager.py
+│   └── journal.py
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
@@ -66,6 +92,8 @@ MicroAlpha-IBKR/
 │   └── reports/
 │       ├── phase5/
 │       ├── phase6/
+│       ├── phase7/
+│       ├── execution/
 │       └── decisions/
 ├── features/
 │   ├── definitions.py
@@ -106,6 +134,10 @@ MicroAlpha-IBKR/
 │   ├── show_active_model.py
 │   ├── set_active_model.py
 │   ├── run_decisions_offline.py
+│   ├── run_paper_sim_offline.py
+│   ├── run_paper_session.py
+│   ├── execution_status.py
+│   ├── show_execution_backend.py
 │   └── risk_check.py
 └── tests/
 ```
@@ -122,7 +154,8 @@ MicroAlpha-IBKR/
 8. Labels are written to `data/processed/labels/<feature_set>/<target_mode>/YYYY-MM-DD/SYMBOL.parquet`.
 9. `PC1` trains and compares model variants.
 10. `PC1` selects one active model for operational inference.
-11. `PC1` runs offline or session decisions without sending orders.
+11. `PC1` runs Phase 6 inference, decision, and risk.
+12. `PC1` runs Phase 7 paper/mock execution without requiring a real broker connection yet.
 
 `PC2` remains the operational source of truth for collection.  
 `PC1` remains the research and experiment node.
@@ -163,7 +196,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Phase 5 and Phase 6 Architecture
+## Phase 5, 6, and 7 Architecture
 
 Phase 5 remains the modeling layer:
 
@@ -188,6 +221,19 @@ Phase 6 adds:
 8. offline decision runner
 9. session runner without orders
 10. structured decision logging
+
+Phase 7 adds:
+
+1. order objects and order state machine
+2. backend abstraction for paper execution
+3. mock execution backend
+4. configurable fill simulator
+5. order manager
+6. position and portfolio state tracking
+7. paper PnL and commission accounting
+8. execution journal for orders, fills, positions, and PnL
+9. execution status and backend status commands
+10. offline and session paper runners that preserve the active-model interface
 
 ### Feature Registry
 
@@ -450,6 +496,15 @@ python app.py run-decisions-offline --symbols SPY --limit 200
 python app.py run-session --symbols SPY
 ```
 
+### Phase 7 Paper Execution Commands
+
+```bash
+python app.py show-execution-backend
+python app.py execution-status
+python app.py run-paper-sim-offline --symbols SPY --limit 200
+python app.py run-paper-session --symbols SPY --latest-per-symbol 2
+```
+
 ## Active Model Selection
 
 The default operational model is stored in:
@@ -486,7 +541,9 @@ Review the current selection with:
 python app.py show-active-model
 ```
 
-## Phase 6 Inference and Decisions
+Phase 7 uses that selection directly. To replace the temporary simulated models later, register the new artifact and change only the active selection. The execution code does not need to be rewritten.
+
+## Phase 6 and Phase 7 Operational Chain
 
 `models/inference.py` loads the active Phase 5 artifact and normalizes output into one structure for the operational layer. Depending on the target mode, it can emit:
 
@@ -521,9 +578,21 @@ plus:
 - spread and estimated-cost limits
 - kill switch on invalid/anomalous model output
 
+`execution/order_manager.py` then converts approved decisions into normalized paper orders and routes them through the configured execution backend. The default backend in Phase 7 is the mock paper backend in `execution/paper_broker_mock.py`.
+
+The execution stack records:
+
+- order lifecycle transitions
+- backend acknowledgements or rejections
+- simulated fills
+- commissions
+- position updates
+- paper PnL snapshots
+- persisted execution state for status inspection
+
 ## Offline and Session Runners
 
-Offline review:
+Phase 6 decision review:
 
 ```bash
 python app.py run-decisions-offline --symbols SPY --limit 200
@@ -549,6 +618,31 @@ This command reads the latest available feature rows and runs the same decision 
 - does **not** send orders
 - does **not** paper trade yet
 - only logs what the current operational layer would decide
+
+Phase 7 offline paper simulation:
+
+```bash
+python app.py run-paper-sim-offline --symbols SPY --limit 200
+```
+
+This command:
+
+1. loads historical features from the active feature set
+2. loads the active model from `config/active_model.yaml`
+3. runs inference, decision, and risk
+4. builds normalized orders for approved decisions
+5. routes them through the configured paper/mock backend
+6. simulates fills and commissions
+7. updates positions and paper PnL
+8. writes JSONL journals plus CSV/Parquet/JSON reports under `data/reports/phase7/`
+
+Phase 7 paper session:
+
+```bash
+python app.py run-paper-session --symbols SPY --latest-per-symbol 2
+```
+
+This command uses the same stack but only over the latest rows per symbol. It is the current skeleton for the future operational paper session.
 
 ### Examples
 
@@ -653,21 +747,22 @@ The pipeline fails clearly when:
 
 ## Limitations
 
-- Phase 6 does not send real orders yet.
-- It also does not implement final paper trading.
+- Phase 7 uses a mock paper backend, not a real IBKR paper router yet.
+- The currently active models are temporary and were trained from simulated data.
+- Replacing those models later should only require new artifacts plus an active-model switch, but the new models still need to respect the existing artifact interface.
 - Binary classification targets can only express `LONG` or `NO_TRADE` cleanly; they are not a true short target.
 - The session runner currently operates on the latest available feature rows, not on a live streaming feature service.
-- The risk engine is prepared for realized PnL tracking, but without broker integration it only uses offline realized outcomes when labels are available.
+- The mock backend fills synchronously inside the run; it is not yet a persistent asynchronous broker event loop.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
 
-## Phase 7
+## Next Phase
 
 The next phase should build on this by adding:
 
-- paper trading with broker integration gates
-- stronger session state and realized PnL plumbing
-- decision-to-order translation
-- execution audit and fill reconciliation
+- a real IBKR paper backend that implements the same backend interface
+- asynchronous order/fill reconciliation with broker callbacks
+- broker-native order ids and cancel/replace flows
+- stronger session state and reconciliation across process restarts
 - monitoring and drift checks
 - promotion rules for switching the active model safely
