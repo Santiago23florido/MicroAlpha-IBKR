@@ -1,0 +1,38 @@
+defaults:
+  execution:
+    active_execution_backend: mock
+    paper_mode: true
+    default_order_type: MARKET
+    default_position_size: 1
+    max_position_size: 3
+    reject_invalid_orders: true
+    allow_partial_fills: true
+    fill_delay_ms: 0
+    simulate_immediate_fills: true
+    slippage_bps: 1.0
+    commission_per_trade: 0.25
+    commission_per_share: 0.005
+    reject_probability: 0.0
+    partial_fill_probability: 0.35
+    partial_fill_ratio: 0.5
+    spread_aware_fills: true
+  logging:
+    enabled: true
+    journal_dir: data/reports/execution
+    state_path: data/processed/runtime/paper_execution_state.json
+    report_dir: data/reports/phase7
+  session:
+    initial_cash: 100000.0
+    latest_per_symbol: 1
+    max_orders_per_run: 100
+    reset_state_on_offline_run: true
+    reset_state_on_session_run: false
+    recent_event_limit: 5
+
+environments:
+  development:
+    execution:
+      paper_mode: true
+  deploy:
+    execution:
+      paper_mode: true

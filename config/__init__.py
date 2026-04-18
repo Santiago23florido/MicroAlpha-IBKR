@@ -27,6 +27,13 @@ from config.phase6 import (
     load_phase6_config,
     set_active_model_selection,
 )
+from config.phase7 import (
+    ExecutionBackendConfig,
+    ExecutionLoggingConfig,
+    ExecutionSessionConfig,
+    Phase7Config,
+    load_phase7_config,
+)
 
 __all__ = [
     "BrokerSettings",
@@ -34,10 +41,14 @@ __all__ = [
     "DecisionConfig",
     "DecisionLoggingConfig",
     "DeploymentSettings",
+    "ExecutionBackendConfig",
+    "ExecutionLoggingConfig",
+    "ExecutionSessionConfig",
     "FeaturePipelineSettings",
     "LanSyncSettings",
     "ModelSettings",
     "Phase6Config",
+    "Phase7Config",
     "PathSettings",
     "RiskSettings",
     "RiskEngineConfig",
@@ -50,6 +61,7 @@ __all__ = [
     "ActiveModelSelection",
     "load_active_model_selection",
     "load_phase6_config",
+    "load_phase7_config",
     "load_settings",
     "set_active_model_selection",
 ]
