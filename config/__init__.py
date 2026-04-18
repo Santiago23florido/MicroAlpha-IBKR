@@ -34,6 +34,15 @@ from config.phase7 import (
     Phase7Config,
     load_phase7_config,
 )
+from config.phase8 import (
+    AlertFlagConfig,
+    DriftThresholdConfig,
+    EvaluationWindowConfig,
+    PerformanceThresholdConfig,
+    Phase8Config,
+    Phase8ReportPathConfig,
+    load_phase8_config,
+)
 
 __all__ = [
     "BrokerSettings",
@@ -41,14 +50,20 @@ __all__ = [
     "DecisionConfig",
     "DecisionLoggingConfig",
     "DeploymentSettings",
+    "AlertFlagConfig",
+    "DriftThresholdConfig",
     "ExecutionBackendConfig",
     "ExecutionLoggingConfig",
     "ExecutionSessionConfig",
+    "EvaluationWindowConfig",
     "FeaturePipelineSettings",
     "LanSyncSettings",
     "ModelSettings",
+    "PerformanceThresholdConfig",
     "Phase6Config",
     "Phase7Config",
+    "Phase8Config",
+    "Phase8ReportPathConfig",
     "PathSettings",
     "RiskSettings",
     "RiskEngineConfig",
@@ -62,6 +77,7 @@ __all__ = [
     "load_active_model_selection",
     "load_phase6_config",
     "load_phase7_config",
+    "load_phase8_config",
     "load_settings",
     "set_active_model_selection",
 ]

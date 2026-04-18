@@ -33,6 +33,7 @@ def build_phase6_test_settings(tmp_path: Path):
         "modeling.yaml",
         "phase6.yaml",
         "phase7.yaml",
+        "phase8.yaml",
     ):
         shutil.copy(PROJECT_ROOT / "config" / name, config_dir / name)
     env_file = tmp_path / ".env"

@@ -40,6 +40,14 @@ from models.train_deep import train_deep_model
 from monitoring.data_quality import validate_imports
 from monitoring.healthcheck import build_healthcheck_report
 from monitoring.sync import sync_data_artifacts
+from reporting.report_bundle import (
+    analyze_signal_report,
+    detect_drift_report,
+    evaluate_performance_report,
+    full_evaluation_run,
+    generate_report,
+)
+from evaluation.compare_runs import compare_runs
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -209,6 +217,48 @@ def build_parser() -> argparse.ArgumentParser:
     paper_offline_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     paper_offline_parser.add_argument("--label-root", help="Override the label parquet root for offline realized-outcome joins.")
     paper_offline_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    evaluate_performance_parser = subparsers.add_parser(
+        "evaluate-performance",
+        help="Evaluate economic performance, trade metrics, and segment performance for a Phase 7 run.",
+    )
+    evaluate_performance_parser.add_argument("--summary-path", help="Explicit Phase 7 summary JSON path.")
+    evaluate_performance_parser.add_argument("--parquet-path", help="Explicit Phase 7 parquet path.")
+
+    analyze_signals_parser = subparsers.add_parser(
+        "analyze-signals",
+        help="Analyze signal quality, monotonicity, and calibration for a Phase 7 run.",
+    )
+    analyze_signals_parser.add_argument("--summary-path", help="Explicit Phase 7 summary JSON path.")
+    analyze_signals_parser.add_argument("--parquet-path", help="Explicit Phase 7 parquet path.")
+
+    detect_drift_parser = subparsers.add_parser(
+        "detect-drift",
+        help="Detect feature, prediction, and label drift for a Phase 7 run.",
+    )
+    detect_drift_parser.add_argument("--summary-path", help="Explicit Phase 7 summary JSON path.")
+    detect_drift_parser.add_argument("--parquet-path", help="Explicit Phase 7 parquet path.")
+
+    compare_runs_parser = subparsers.add_parser(
+        "compare-runs",
+        help="Compare stored Phase 8 run reports and build an economic ranking table.",
+    )
+    compare_runs_parser.add_argument("--report-paths", nargs="+", help="Optional explicit Phase 8 run_report.json paths.")
+    compare_runs_parser.add_argument("--output-dir", help="Optional output directory for comparison artifacts.")
+
+    generate_report_parser = subparsers.add_parser(
+        "generate-report",
+        help="Generate the full Phase 8 report bundle for a Phase 7 run.",
+    )
+    generate_report_parser.add_argument("--summary-path", help="Explicit Phase 7 summary JSON path.")
+    generate_report_parser.add_argument("--parquet-path", help="Explicit Phase 7 parquet path.")
+
+    full_eval_parser = subparsers.add_parser(
+        "full-evaluation-run",
+        help="Alias for generate-report to run the complete Phase 8 evaluation bundle.",
+    )
+    full_eval_parser.add_argument("--summary-path", help="Explicit Phase 7 summary JSON path.")
+    full_eval_parser.add_argument("--parquet-path", help="Explicit Phase 7 parquet path.")
 
     subparsers.add_parser(
         "risk-check",
@@ -524,6 +574,69 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "execution-status":
             print_result(execution_status(settings, limit=args.limit))
+            return 0
+
+        if args.command == "evaluate-performance":
+            print_result(
+                evaluate_performance_report(
+                    settings,
+                    summary_path=args.summary_path,
+                    parquet_path=args.parquet_path,
+                )
+            )
+            return 0
+
+        if args.command == "analyze-signals":
+            print_result(
+                analyze_signal_report(
+                    settings,
+                    summary_path=args.summary_path,
+                    parquet_path=args.parquet_path,
+                )
+            )
+            return 0
+
+        if args.command == "detect-drift":
+            print_result(
+                detect_drift_report(
+                    settings,
+                    summary_path=args.summary_path,
+                    parquet_path=args.parquet_path,
+                )
+            )
+            return 0
+
+        if args.command == "compare-runs":
+            from config.phase8 import load_phase8_config
+
+            phase8 = load_phase8_config(settings)
+            print_result(
+                compare_runs(
+                    phase8.report_paths.report_dir,
+                    report_paths=args.report_paths,
+                    output_dir=args.output_dir or phase8.report_paths.compare_runs_dir,
+                )
+            )
+            return 0
+
+        if args.command == "generate-report":
+            print_result(
+                generate_report(
+                    settings,
+                    summary_path=args.summary_path,
+                    parquet_path=args.parquet_path,
+                )
+            )
+            return 0
+
+        if args.command == "full-evaluation-run":
+            print_result(
+                full_evaluation_run(
+                    settings,
+                    summary_path=args.summary_path,
+                    parquet_path=args.parquet_path,
+                )
+            )
             return 0
 
         if args.command == "set-active-model":
