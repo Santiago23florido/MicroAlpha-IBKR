@@ -16,6 +16,7 @@ from backtest.runner import run_backtest_stub
 from broker.ib_client import IBClientError
 from config import Settings, load_settings
 from config.phase6 import set_active_model_selection
+from config.phase10_11 import load_phase10_11_config
 from deployment.lan_sync import pull_from_pc2
 from engine.phase6 import risk_check, run_decisions_offline, run_session, show_active_model
 from engine.phase7 import (
@@ -55,6 +56,18 @@ from reporting.report_bundle import (
     generate_report,
 )
 from evaluation.compare_runs import compare_runs
+from monitoring.alerts import AlertStore
+from monitoring.paper_monitor import monitor_paper_session
+from ops.incidents import IncidentStore
+from ops.orchestrator import (
+    full_paper_validation_cycle,
+    generate_runbooks,
+    postflight_check_command,
+    preflight_check_command,
+    system_health_report,
+)
+from validation.paper_validation import compare_paper_sessions, reconcile_and_report, run_paper_validation_session
+from validation.readiness import generate_readiness_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -190,6 +203,89 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "broker-healthcheck",
         help="Connect to IBKR Paper, validate paper-mode safety guards, and print broker connectivity status.",
+    )
+
+    validation_session_parser = subparsers.add_parser(
+        "run-paper-validation-session",
+        help="Run one formal paper-validation session with session tracking, monitoring, reconciliation, and readiness outputs.",
+    )
+    validation_session_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    validation_session_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    validation_session_parser.add_argument("--latest-per-symbol", type=int, help="How many latest rows per symbol to evaluate.")
+    validation_session_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+    validation_session_parser.add_argument("--skip-preflight", action="store_true", help="Skip explicit preflight before the validation session.")
+
+    reconcile_parser = subparsers.add_parser(
+        "reconcile-broker-state",
+        help="Reconcile internal execution state against IBKR Paper broker state and write reconciliation reports.",
+    )
+    reconcile_parser.add_argument("--session-id", help="Optional paper-validation session id.")
+
+    monitor_parser = subparsers.add_parser(
+        "monitor-paper-session",
+        help="Run a conservative monitoring snapshot for the current paper-validation session and emit alerts/incidents.",
+    )
+    monitor_parser.add_argument("--session-id", help="Optional paper-validation session id.")
+    monitor_parser.add_argument("--summary-path", help="Optional explicit Phase 7 summary path.")
+    monitor_parser.add_argument("--iterations", type=int, default=1, help="How many monitoring snapshots to collect.")
+
+    subparsers.add_parser(
+        "compare-paper-sessions",
+        help="Compare tracked paper-validation sessions and generate health and stability leaderboards.",
+    )
+
+    readiness_parser = subparsers.add_parser(
+        "generate-readiness-report",
+        help="Generate the readiness report for the latest or selected paper-validation session.",
+    )
+    readiness_parser.add_argument("--session-id", help="Optional paper-validation session id.")
+
+    health_report_parser = subparsers.add_parser(
+        "system-health-report",
+        help="Generate the consolidated system health report across the latest paper-validation artifacts.",
+    )
+    health_report_parser.add_argument("--session-id", help="Optional paper-validation session id.")
+
+    full_validation_parser = subparsers.add_parser(
+        "full-paper-validation-cycle",
+        help="Run the full paper validation cycle: session, monitoring, reconciliation, readiness, postflight, and health reporting.",
+    )
+    full_validation_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    full_validation_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    full_validation_parser.add_argument("--latest-per-symbol", type=int, help="How many latest rows per symbol to evaluate.")
+    full_validation_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    preflight_parser = subparsers.add_parser(
+        "preflight-check",
+        help="Run conservative preflight checks before any automated paper-validation session.",
+    )
+    preflight_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+
+    postflight_parser = subparsers.add_parser(
+        "postflight-check",
+        help="Run postflight validation, archival, and safe-restart assessment for a paper-validation session.",
+    )
+    postflight_parser.add_argument("--session-id", help="Optional paper-validation session id. Defaults to the latest tracked session.")
+
+    list_alerts_parser = subparsers.add_parser(
+        "list-alerts",
+        help="List structured alerts generated by validation, monitoring, reconciliation, and ops checks.",
+    )
+    list_alerts_parser.add_argument("--session-id", help="Optional paper-validation session id.")
+    list_alerts_parser.add_argument("--severity", help="Optional severity filter.")
+    list_alerts_parser.add_argument("--limit", type=int, default=20, help="Maximum number of alerts to return.")
+
+    list_incidents_parser = subparsers.add_parser(
+        "list-incidents",
+        help="List structured incidents generated during paper validation and ops hardening.",
+    )
+    list_incidents_parser.add_argument("--session-id", help="Optional paper-validation session id.")
+    list_incidents_parser.add_argument("--severity", help="Optional severity filter.")
+    list_incidents_parser.add_argument("--limit", type=int, default=20, help="Maximum number of incidents to return.")
+
+    subparsers.add_parser(
+        "generate-runbooks",
+        help="Generate the operational runbooks under docs/runbooks/.",
     )
 
     execution_status_parser = subparsers.add_parser(
@@ -595,6 +691,109 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "broker-healthcheck":
             print_result(broker_healthcheck(settings))
+            return 0
+
+        if args.command == "run-paper-validation-session":
+            print_result(
+                run_paper_validation_session(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    latest_per_symbol=args.latest_per_symbol,
+                    decision_log_path=args.decision_log_path,
+                    run_preflight=not args.skip_preflight,
+                )
+            )
+            return 0
+
+        if args.command == "reconcile-broker-state":
+            print_result(reconcile_and_report(settings, session_id=args.session_id))
+            return 0
+
+        if args.command == "monitor-paper-session":
+            print_result(
+                monitor_paper_session(
+                    settings,
+                    session_id=args.session_id,
+                    summary_path=args.summary_path,
+                    iterations=args.iterations,
+                )
+            )
+            return 0
+
+        if args.command == "compare-paper-sessions":
+            print_result(compare_paper_sessions(settings))
+            return 0
+
+        if args.command == "generate-readiness-report":
+            print_result(generate_readiness_report(settings, session_id=args.session_id))
+            return 0
+
+        if args.command == "system-health-report":
+            print_result(system_health_report(settings, session_id=args.session_id))
+            return 0
+
+        if args.command == "full-paper-validation-cycle":
+            print_result(
+                full_paper_validation_cycle(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    latest_per_symbol=args.latest_per_symbol,
+                    decision_log_path=args.decision_log_path,
+                )
+            )
+            return 0
+
+        if args.command == "preflight-check":
+            print_result(preflight_check_command(settings, symbols=args.symbols))
+            return 0
+
+        if args.command == "postflight-check":
+            session_id = args.session_id
+            if session_id is None:
+                phase10_11 = load_phase10_11_config(settings)
+                from validation.session_tracker import SessionTracker
+
+                tracker = SessionTracker(
+                    session_root=phase10_11.report_paths.session_root,
+                    registry_path=phase10_11.report_paths.registry_path,
+                    archive_root=phase10_11.report_paths.archive_root,
+                )
+                latest = tracker.latest_session()
+                if latest is None:
+                    print_result({"status": "error", "message": "No tracked paper-validation session exists for postflight-check."})
+                    return 1
+                session_id = latest["session_id"]
+            print_result(postflight_check_command(settings, session_id=session_id))
+            return 0
+
+        if args.command == "list-alerts":
+            phase10_11 = load_phase10_11_config(settings)
+            store = AlertStore(phase10_11.report_paths.alerts_path)
+            print_result(
+                {
+                    "status": "ok",
+                    "alerts": store.list_alerts(session_id=args.session_id, severity=args.severity, limit=args.limit),
+                    "summary": store.summarize(session_id=args.session_id),
+                }
+            )
+            return 0
+
+        if args.command == "list-incidents":
+            phase10_11 = load_phase10_11_config(settings)
+            store = IncidentStore(phase10_11.report_paths.incidents_path)
+            print_result(
+                {
+                    "status": "ok",
+                    "incidents": store.list_incidents(session_id=args.session_id, severity=args.severity, limit=args.limit),
+                    "summary": store.summarize(session_id=args.session_id),
+                }
+            )
+            return 0
+
+        if args.command == "generate-runbooks":
+            print_result(generate_runbooks(settings))
             return 0
 
         if args.command == "execution-status":

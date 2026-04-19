@@ -1,0 +1,86 @@
+defaults:
+  validation_session_limits:
+    max_sessions_to_compare: 25
+    max_monitor_iterations: 10
+    max_session_runtime_minutes: 240
+  reconciliation_tolerances:
+    quantity_tolerance: 0.0
+    average_price_tolerance: 0.05
+    pnl_tolerance: 5.0
+  alert_thresholds:
+    max_order_rejection_rate: 0.25
+    max_partial_fill_rate: 0.50
+    max_cancel_rate: 0.25
+    max_risk_block_rate: 0.80
+    max_alerts_per_session: 25
+    max_disconnects: 2
+    max_stale_data_seconds: 900
+    max_submit_to_fill_latency_ms: 15000.0
+  readiness_thresholds:
+    max_allowed_mismatches: 0
+    max_allowed_disconnects: 1
+    max_allowed_alerts: 10
+    max_allowed_latency_ms: 15000.0
+    max_allowed_drawdown: 1000.0
+    min_required_sessions_for_readiness: 3
+    max_session_failure_rate: 0.25
+    max_critical_alerts: 0
+    max_drift_psi: 0.35
+  monitoring_intervals:
+    broker_healthcheck_seconds: 60
+    reconciliation_seconds: 120
+    data_freshness_seconds: 900
+    monitoring_sleep_seconds: 1.0
+  scheduler_intervals:
+    preflight_delay_seconds: 0.0
+    scheduled_healthcheck_seconds: 60
+    scheduled_reconciliation_seconds: 300
+    scheduled_reporting_seconds: 300
+    default_monitor_iterations: 1
+  report_paths:
+    session_root: data/reports/sessions
+    archive_root: data/reports/archive
+    alerts_path: data/reports/validation/alerts.jsonl
+    incidents_path: data/reports/validation/incidents.jsonl
+    recovery_events_path: data/reports/validation/recovery_events.jsonl
+    registry_path: data/reports/validation/session_registry.jsonl
+    health_report_path: data/reports/validation/system_health_latest.json
+    runbooks_dir: docs/runbooks
+    reconciliation_dir: data/reports/reconciliation
+    comparison_dir: data/reports/validation/comparisons
+  archival_policy:
+    enabled: true
+    archive_completed_sessions: true
+    retention_days: 30
+    session_retention_policy: keep_recent_and_archive
+  gates:
+    require_ibkr_paper_backend: true
+    block_on_critical_alerts: true
+    block_on_reconciliation_mismatch: true
+    block_on_not_ready: true
+    block_on_broker_mode_ambiguity: true
+    block_on_high_failure_rate: true
+  recovery:
+    reconnect_attempt_limits: 2
+    monitor_restart_limit: 1
+    allow_resume_if_safe: false
+    abort_on_duplicate_submission_risk: true
+  checks:
+    preflight_required_checks:
+      - active_model_loadable
+      - execution_backend_real
+      - broker_mode_paper
+      - safe_to_trade_enabled
+      - allow_session_execution
+      - required_paths_writable
+      - symbol_list_valid
+      - broker_reachable
+    postflight_required_checks:
+      - reports_created
+      - reconciliation_completed
+      - alerts_summarized
+      - archive_completed
+
+environments:
+  development: {}
+  deploy: {}
