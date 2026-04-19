@@ -10,6 +10,7 @@ from config import Settings
 from config.phase7 import load_phase7_config
 from config.phase8 import load_phase8_config
 from evaluation.compare_runs import compare_runs, update_economic_leaderboard
+from evaluation.execution_metrics import compare_mock_vs_real_execution, evaluate_execution_metrics
 from evaluation.io import filter_records, flatten_decision_metadata, load_phase7_frame, read_jsonl, resolve_phase7_paths, write_json
 from evaluation.performance import analyze_trade_logs, evaluate_performance, performance_by_segments
 from evaluation.signal_analysis import analyze_signal_quality
@@ -135,6 +136,12 @@ def generate_report(
         phase7_summary=context["phase7_summary"],
         phase8_config=context["phase8"],
     )
+    execution = evaluate_execution_metrics(
+        context["decision_frame"],
+        orders=context["orders"],
+        fills=context["fills"],
+        reports=context["reports"],
+    )
     trade_analysis = analyze_trade_logs(
         context["decision_frame"],
         orders=context["orders"],
@@ -147,6 +154,7 @@ def generate_report(
         **_write_performance_outputs(context, performance, segments),
         **_write_signal_outputs(context, signal),
         **_write_drift_outputs(context, drift),
+        **_write_execution_outputs(context, execution),
         **_write_trade_outputs(context, trade_analysis),
     }
 
@@ -156,6 +164,7 @@ def generate_report(
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "performance_summary": performance["summary"],
             "signal_summary": signal["summary"],
+            "execution_summary": execution["summary"],
             "trade_summary": trade_analysis["summary"],
         },
     )
@@ -163,6 +172,7 @@ def generate_report(
         *performance["alerts"],
         *segments["alerts"],
         *signal["alerts"],
+        *execution["alerts"],
         *drift["alerts"],
     ]
     alerts = _apply_alert_flags(alerts, context["phase8"].alert_flags)
@@ -176,10 +186,12 @@ def generate_report(
         "model_name": context["phase7_summary"].get("active_model", {}).get("model_name"),
         "feature_set_name": context["phase7_summary"].get("active_model", {}).get("feature_set_name"),
         "target_mode": context["phase7_summary"].get("active_model", {}).get("target_mode"),
+        "backend_name": context["phase7_summary"].get("backend_name"),
         "auto_generated": auto_generated,
         "alerts": alerts,
         "performance_summary": performance["summary"],
         "signal_summary": signal["summary"],
+        "execution_summary": execution["summary"],
         "drift_summary": {
             "data_drift_max_psi": drift["data_drift"].get("max_psi"),
             "prediction_drift_max_psi": drift["prediction_drift"].get("max_psi"),
@@ -188,6 +200,13 @@ def generate_report(
         "trade_summary": trade_analysis["summary"],
         "report_paths": {**report_paths, "metrics_report_path": metrics_report_path},
     }
+    mock_vs_real = compare_mock_vs_real_execution(
+        context["phase8"].report_paths.report_dir,
+        current_run_report=run_report,
+    )
+    comparison_path = write_json(report_dir / "mock_vs_real_comparison.json", mock_vs_real)
+    run_report["mock_vs_real_comparison"] = mock_vs_real
+    run_report["report_paths"]["mock_vs_real_comparison_path"] = comparison_path
     run_report_path = write_json(report_dir / "run_report.json", run_report)
 
     economic_leaderboard = update_economic_leaderboard(
@@ -256,6 +275,8 @@ def _build_report_context(
     orders = filter_records(read_jsonl(journal_root / "orders.jsonl"), decision_ids=decision_ids, order_ids=order_ids)
     fills = filter_records(read_jsonl(journal_root / "fills.jsonl"), decision_ids=decision_ids, order_ids=order_ids)
     reports = filter_records(read_jsonl(journal_root / "reports.jsonl"), decision_ids=decision_ids, order_ids=order_ids)
+    backend_events = filter_records(read_jsonl(journal_root / "backend_events.jsonl"), decision_ids=decision_ids, order_ids=order_ids)
+    reconciliation = filter_records(read_jsonl(journal_root / "reconciliation.jsonl"), decision_ids=decision_ids, order_ids=order_ids)
 
     return {
         "phase7": phase7,
@@ -267,6 +288,8 @@ def _build_report_context(
         "orders": orders,
         "fills": fills,
         "reports": reports,
+        "backend_events": backend_events,
+        "reconciliation": reconciliation,
     }
 
 
@@ -328,6 +351,18 @@ def _write_drift_outputs(context: dict[str, Any], drift: dict[str, Any]) -> dict
     return {"drift_report_path": drift_path, **detail_paths}
 
 
+def _write_execution_outputs(context: dict[str, Any], execution: dict[str, Any]) -> dict[str, str]:
+    report_dir = _bundle_dir(context)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = write_json(report_dir / "execution_metrics.json", {"summary": execution["summary"], "alerts": execution["alerts"]})
+    orders_path = report_dir / "execution_orders.csv"
+    execution["orders"].to_csv(orders_path, index=False)
+    return {
+        "execution_metrics_path": summary_path,
+        "execution_orders_path": str(orders_path),
+    }
+
+
 def _write_trade_outputs(context: dict[str, Any], trade_analysis: dict[str, Any]) -> dict[str, str]:
     report_dir = _bundle_dir(context)
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -337,11 +372,15 @@ def _write_trade_outputs(context: dict[str, Any], trade_analysis: dict[str, Any]
     reports_path = report_dir / "trade_reports.csv"
     rejections_path = report_dir / "trade_rejections.csv"
     inconsistencies_path = report_dir / "trade_inconsistencies.csv"
+    backend_events_path = report_dir / "trade_backend_events.csv"
+    reconciliation_path = report_dir / "trade_reconciliation.csv"
     trade_analysis["orders"].to_csv(orders_path, index=False)
     trade_analysis["fills"].to_csv(fills_path, index=False)
     trade_analysis["reports"].to_csv(reports_path, index=False)
     trade_analysis["rejections"].to_csv(rejections_path, index=False)
     trade_analysis["inconsistencies"].to_csv(inconsistencies_path, index=False)
+    pd.DataFrame(context.get("backend_events", [])).to_csv(backend_events_path, index=False)
+    pd.DataFrame(context.get("reconciliation", [])).to_csv(reconciliation_path, index=False)
     return {
         "trade_analysis_path": trade_path,
         "trade_orders_path": str(orders_path),
@@ -349,4 +388,6 @@ def _write_trade_outputs(context: dict[str, Any], trade_analysis: dict[str, Any]
         "trade_reports_path": str(reports_path),
         "trade_rejections_path": str(rejections_path),
         "trade_inconsistencies_path": str(inconsistencies_path),
+        "trade_backend_events_path": str(backend_events_path),
+        "trade_reconciliation_path": str(reconciliation_path),
     }

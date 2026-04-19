@@ -97,6 +97,9 @@ class Order:
     updated_at: str
     source_model_name: str
     source_decision_id: str
+    backend_name: str | None = None
+    broker_order_id: int | None = None
+    broker_perm_id: int | None = None
     limit_price: float | None = None
     stop_price: float | None = None
     filled_quantity: int = 0
@@ -129,6 +132,9 @@ class FillEvent:
     backend_name: str
     source_model_name: str
     source_decision_id: str
+    execution_id: str | None = None
+    broker_order_id: int | None = None
+    broker_perm_id: int | None = None
     slippage_bps: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -146,6 +152,7 @@ class ExecutionReport:
     created_at: str
     source_model_name: str
     source_decision_id: str
+    broker_order_id: int | None = None
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 

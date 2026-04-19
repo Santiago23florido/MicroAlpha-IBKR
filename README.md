@@ -1,13 +1,13 @@
-# MicroAlpha-IBKR Phase 8: Evaluation, Monitoring, Drift Detection, and Paper Execution on Top of the LAN Modeling Pipeline
+# MicroAlpha-IBKR Phase 9: IBKR Paper Execution, Evaluation, Monitoring, and Broker-Ready Paper Routing on Top of the LAN Modeling Pipeline
 
 ## Purpose
 
-This repository now supports the Phase 8 evaluation and monitoring layer on top of the Phase 5, Phase 6, and Phase 7 workflow while keeping the dual-machine architecture intact:
+This repository now supports the Phase 9 IBKR Paper execution layer on top of the Phase 5, Phase 6, Phase 7, and Phase 8 workflow while keeping the dual-machine architecture intact:
 
 - `PC2`: collector and operational raw data source
 - `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-Phase 8 still does **not** send real broker orders. It connects:
+Phase 9 keeps the same normalized operational chain and adds a real IBKR Paper backend without tying execution to any specific model artifact. The system now connects:
 
 - feature stores
 - one explicitly selected active model from Phase 5
@@ -16,24 +16,28 @@ Phase 8 still does **not** send real broker orders. It connects:
 - a risk engine
 - an order manager
 - a paper/mock execution backend
+- an IBKR Paper execution backend compatible with the same interface
 - a configurable fill simulator
 - paper positions and PnL tracking
 - structured journals for orders, fills, positions, and PnL
 - offline and session runners with mock paper routing
+- a real paper session runner for IBKR Paper
 - economic performance evaluation
 - signal quality analysis by score, probability, and buckets
 - drift detection for data, prediction outputs, and labels
 - run-to-run comparison and economic leaderboard reporting
 - automatic Phase 8 reports after paper runs
+- execution latency metrics and mock-vs-real comparison artifacts
 
 The active model is visible in `config/active_model.yaml`, not hidden in code.
 
 Important operational note:
 
 - the currently selected models were trained with simulated data and are temporary
-- Phase 7 does not hardcode those artifacts anywhere in the execution stack
+- the execution stack does not hardcode those artifacts anywhere
 - future retraining should only require registering new artifacts and switching the active model selection
 - the execution and evaluation code depends on the active-model interface and normalized decisions, not on a specific model file
+- switching from `mock` to `ibkr_paper` should not require changing the order manager, decision engine, or risk engine
 
 ## Architecture
 
@@ -54,11 +58,12 @@ Important operational note:
 - evaluates them and writes a leaderboard plus artifacts
 - resolves one active model from config/registry
 - runs inference, decision, and risk on normalized outputs
-- routes approved decisions into the Phase 7 paper/mock execution layer
+- routes approved decisions into the paper execution layer through a configurable backend
 - persists orders, fills, positions, PnL, and execution state for later audit
 - evaluates the resulting economic behavior and signal quality
 - tracks drift between current and historical feature / prediction distributions
 - writes structured Phase 8 reports for diagnostics and model comparison
+- can connect to IBKR Paper for real paper routing while keeping conservative paper-only safety guards
 
 ## Project Structure
 
@@ -85,6 +90,7 @@ MicroAlpha-IBKR/
 │   ├── io.py
 │   ├── performance.py
 │   ├── signal_analysis.py
+│   ├── execution_metrics.py
 │   └── compare_runs.py
 ├── execution/
 │   ├── models.py
@@ -92,9 +98,14 @@ MicroAlpha-IBKR/
 │   ├── order_manager.py
 │   ├── fill_simulator.py
 │   ├── paper_broker_mock.py
+│   ├── ibkr_paper_backend.py
+│   ├── ibkr_state_mapper.py
 │   ├── backend.py
 │   ├── position_manager.py
 │   └── journal.py
+├── broker/
+│   ├── ib_client.py
+│   └── orders.py
 ├── monitoring/
 │   └── drift.py
 ├── data/
@@ -157,6 +168,8 @@ MicroAlpha-IBKR/
 │   ├── run_decisions_offline.py
 │   ├── run_paper_sim_offline.py
 │   ├── run_paper_session.py
+│   ├── run_paper_session_real.py
+│   ├── broker_healthcheck.py
 │   ├── execution_status.py
 │   ├── show_execution_backend.py
 │   ├── evaluate_performance.py
@@ -182,7 +195,8 @@ MicroAlpha-IBKR/
 9. `PC1` trains and compares model variants.
 10. `PC1` selects one active model for operational inference.
 11. `PC1` runs Phase 6 inference, decision, and risk.
-12. `PC1` runs Phase 7 paper/mock execution without requiring a real broker connection yet.
+12. `PC1` can run Phase 7 mock paper execution for offline and session validation.
+13. `PC1` can run Phase 9 IBKR Paper execution through the same order-management interface.
 
 `PC2` remains the operational source of truth for collection.  
 `PC1` remains the research and experiment node.
@@ -223,7 +237,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Phase 5, 6, and 7 Architecture
+## Phase 5, 6, 7, 8, and 9 Architecture
 
 Phase 5 remains the modeling layer:
 
@@ -272,6 +286,17 @@ Phase 8 adds:
 6. structured report bundles in JSON, CSV, and Parquet
 7. run comparison and economic leaderboard updates
 8. automatic post-run reporting integrated into the paper execution pipeline
+
+Phase 9 adds:
+
+1. a real `ibkr_paper` execution backend that implements the same backend interface as `mock`
+2. broker connectivity, healthcheck, and paper-only safety validation
+3. internal-order to broker-order id mapping and reconciliation
+4. real broker status mapping into the internal order state machine
+5. real fill / execution ingestion with timestamps, commissions, and partial fills
+6. execution latency metrics from decision to submit, acknowledgment, and fill
+7. decision-vs-execution comparison between expected order intent and actual broker result
+8. conservative guard rails to reject live mode, disabled safety flags, unsupported symbols, or missing risk checks
 
 ### Feature Registry
 
@@ -543,6 +568,16 @@ python app.py run-paper-sim-offline --symbols SPY --limit 200
 python app.py run-paper-session --symbols SPY --latest-per-symbol 2
 ```
 
+### Phase 9 IBKR Paper Commands
+
+```bash
+python app.py broker-healthcheck
+python app.py show-execution-backend
+python app.py show-active-model
+python app.py run-paper-session-real --symbols SPY --latest-per-symbol 1
+python app.py execution-status --limit 5
+```
+
 ### Phase 8 Evaluation and Monitoring Commands
 
 ```bash
@@ -590,9 +625,9 @@ Review the current selection with:
 python app.py show-active-model
 ```
 
-Phase 7 uses that selection directly. To replace the temporary simulated models later, register the new artifact and change only the active selection. The execution code does not need to be rewritten.
+Phase 7 and Phase 9 use that selection directly. To replace the temporary simulated models later, register the new artifact and change only the active selection. The execution code does not need to be rewritten.
 
-## Phase 6 and Phase 7 Operational Chain
+## Phase 6, 7, and 9 Operational Chain
 
 `models/inference.py` loads the active Phase 5 artifact and normalizes output into one structure for the operational layer. Depending on the target mode, it can emit:
 
@@ -627,17 +662,18 @@ plus:
 - spread and estimated-cost limits
 - kill switch on invalid/anomalous model output
 
-`execution/order_manager.py` then converts approved decisions into normalized paper orders and routes them through the configured execution backend. The default backend in Phase 7 is the mock paper backend in `execution/paper_broker_mock.py`.
+`execution/order_manager.py` then converts approved decisions into normalized paper orders and routes them through the configured execution backend. The default backend remains the mock paper backend in `execution/paper_broker_mock.py`, and Phase 9 adds the real paper backend in `execution/ibkr_paper_backend.py`.
 
 The execution stack records:
 
 - order lifecycle transitions
 - backend acknowledgements or rejections
-- simulated fills
+- simulated or real fills
 - commissions
 - position updates
 - paper PnL snapshots
 - persisted execution state for status inspection
+- broker order ids, perm ids, execution ids, and reconciliation events
 
 ## Offline and Session Runners
 
@@ -693,6 +729,24 @@ python app.py run-paper-session --symbols SPY --latest-per-symbol 2
 
 This command uses the same stack but only over the latest rows per symbol. It is the current skeleton for the future operational paper session.
 
+Phase 9 IBKR Paper session:
+
+```bash
+python app.py run-paper-session-real --symbols SPY --latest-per-symbol 1
+```
+
+This command:
+
+1. loads the active model from `config/active_model.yaml`
+2. checks that the active execution backend is `ibkr_paper`
+3. validates conservative safety guards, including `BROKER_MODE=paper`, `SAFE_TO_TRADE=true`, and `ALLOW_SESSION_EXECUTION=true`
+4. connects to IBKR Paper
+5. runs inference, decision, and risk
+6. reuses the existing order manager to send normalized orders to the real paper backend
+7. ingests broker acknowledgments, fills, and execution details
+8. updates positions, PnL, and reconciliation journals
+9. writes Phase 7 and Phase 8 outputs for later comparison against mock runs
+
 Phase 8 report generation:
 
 ```bash
@@ -708,6 +762,7 @@ This command:
 5. audits orders, fills, and execution reports
 6. writes a structured report bundle under `data/reports/phase8/`
 7. updates the economic leaderboard for cross-run comparison
+8. writes execution metrics and mock-vs-real comparison artifacts when comparable runs exist
 
 ## Interpreting Phase 8 Reports
 
@@ -719,6 +774,8 @@ The main report bundle lives under `data/reports/phase8/<phase7_run_label>/` and
 - `signal_quality.json`
 - `drift_report.json`
 - `trade_analysis.json`
+- `execution_metrics.json`
+- `mock_vs_real_comparison.json`
 - segment tables such as `score_deciles.csv`, `probability_deciles.csv`, `symbol.csv`, `spread_bucket.csv`
 
 Use the reports this way:
@@ -729,6 +786,8 @@ Use the reports this way:
 - review `drift_report.json` before trusting a good or bad session, because distribution shifts can invalidate comparisons
 - use `trade_analysis.json` to spot order rejects, execution inconsistencies, or journaling gaps
 - compare `run_report.json` files across sessions with `compare-runs` to rank runs by PnL, Sharpe, and drawdown
+- use `execution_metrics.json` to inspect fill ratio, rejection rate, cancel rate, slippage, and broker latency
+- use `mock_vs_real_comparison.json` to compare similar runs across the `mock` and `ibkr_paper` backends
 
 Practical edge heuristic:
 
@@ -836,18 +895,77 @@ The pipeline fails clearly when:
 - the temporal split is too small or empty
 - the selected model is incompatible with the target mode
 - a model artifact would be saved without required metadata
+- `BROKER_MODE` is not `paper`
+- the real paper backend is selected while `SAFE_TO_TRADE=false`
+- the real paper backend is selected while `ALLOW_SESSION_EXECUTION=false`
+- the configured symbol is outside the allowed paper-trading universe
+- the broker cannot be reached or does not answer the healthcheck
+- internal and broker order ids cannot be correlated cleanly
+- real fills would leave the local paper position state inconsistent
+
+## Backend Switching
+
+The active execution backend is resolved through `config/phase7.yaml` and can be overridden from the environment with `ACTIVE_EXECUTION_BACKEND`.
+
+Available values:
+
+- `mock`
+- `ibkr_paper`
+
+Examples:
+
+```bash
+ACTIVE_EXECUTION_BACKEND=mock python app.py show-execution-backend
+ACTIVE_EXECUTION_BACKEND=ibkr_paper python app.py broker-healthcheck
+```
+
+The backend switch does not change:
+
+- active-model loading
+- inference
+- decision logic
+- risk checks
+- order manager
+- journals
+- Phase 8 reporting
+
+It only changes the execution backend implementation behind the same interface.
+
+## IBKR Paper Configuration
+
+Minimum paper-routing configuration:
+
+```bash
+ACTIVE_EXECUTION_BACKEND=ibkr_paper
+BROKER_MODE=paper
+SAFE_TO_TRADE=true
+ALLOW_SESSION_EXECUTION=true
+IBKR_PAPER_HOST=127.0.0.1
+IBKR_PAPER_PORT=4002
+IBKR_PAPER_CLIENT_ID=101
+```
+
+Before running `run-paper-session-real`, verify:
+
+1. TWS or IB Gateway is running in paper mode
+2. API access is enabled
+3. the configured host and port match the paper listener
+4. the active model loads correctly
+5. `show-execution-backend` reports `broker_mode=paper`
+6. `broker-healthcheck` returns `status=ok`
 
 ## Limitations
 
-- Phase 7 uses a mock paper backend, not a real IBKR paper router yet.
+- Phase 9 adds a real IBKR Paper backend, but it still targets paper only and must not be used for live trading.
 - The currently active models are temporary and were trained from simulated data.
 - Replacing those models later should only require new artifacts plus an active-model switch, but the new models still need to respect the existing artifact interface.
 - Binary classification targets can only express `LONG` or `NO_TRADE` cleanly; they are not a true short target.
 - The session runner currently operates on the latest available feature rows, not on a live streaming feature service.
-- The mock backend fills synchronously inside the run; it is not yet a persistent asynchronous broker event loop.
+- The mock backend fills synchronously inside the run; the real paper backend still follows orders synchronously inside the current process and is not yet a full asynchronous event service.
 - Phase 8 drift thresholds are simple heuristics; PSI and mean-shift warnings are diagnostic, not proof by themselves.
 - Small sample runs can generate incomplete trade statistics and weak calibration analysis.
-- Current economic metrics depend on mock fills and simulated costs, not on real broker paper fills yet.
+- Current economic metrics can now include real paper fills, but they still depend on broker-paper availability and on limited local reconciliation rather than a persistent execution store.
+- Position reconciliation with broker state is basic and should be treated as a guard rail, not as a final production-grade back-office process.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
 
@@ -855,10 +973,10 @@ The pipeline fails clearly when:
 
 The next phase should build on this by adding:
 
-- a real IBKR paper backend that implements the same backend interface
-- asynchronous order/fill reconciliation with broker callbacks
-- broker-native order ids and cancel/replace flows
-- stronger session state and reconciliation across process restarts
+- a persistent asynchronous broker event loop for paper execution on the operational PC
+- stronger reconciliation across process restarts and broker reconnects
+- richer cancel/replace and open-order recovery flows
+- real-time feature streaming and session orchestration on the server-side PC2 deployment
 - promotion rules for switching the active model safely
 - alert routing outside files, such as email, chat, or dashboard sinks
 - tighter validation against real paper fills and real-time feature drift

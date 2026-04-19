@@ -28,6 +28,7 @@ from config.phase6 import (
     set_active_model_selection,
 )
 from config.phase7 import (
+    IBKRPaperBackendConfig,
     ExecutionBackendConfig,
     ExecutionLoggingConfig,
     ExecutionSessionConfig,
@@ -55,6 +56,7 @@ __all__ = [
     "ExecutionBackendConfig",
     "ExecutionLoggingConfig",
     "ExecutionSessionConfig",
+    "IBKRPaperBackendConfig",
     "EvaluationWindowConfig",
     "FeaturePipelineSettings",
     "LanSyncSettings",

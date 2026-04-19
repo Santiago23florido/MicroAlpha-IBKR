@@ -24,6 +24,7 @@ class ExecutionJournal:
         self.positions_path = self.journal_dir / "positions.jsonl"
         self.pnl_path = self.journal_dir / "pnl.jsonl"
         self.backend_events_path = self.journal_dir / "backend_events.jsonl"
+        self.reconciliation_path = self.journal_dir / "reconciliation.jsonl"
 
     def append_order(self, order: Order) -> None:
         self._append_jsonl(self.orders_path, order.to_dict())
@@ -44,6 +45,9 @@ class ExecutionJournal:
 
     def append_backend_event(self, payload: Mapping[str, Any]) -> None:
         self._append_jsonl(self.backend_events_path, dict(payload))
+
+    def append_reconciliation(self, payload: Mapping[str, Any]) -> None:
+        self._append_jsonl(self.reconciliation_path, dict(payload))
 
     def save_state(self, payload: Mapping[str, Any]) -> None:
         if not self.enabled:
@@ -66,6 +70,9 @@ class ExecutionJournal:
 
     def recent_backend_events(self, limit: int = 5) -> list[dict[str, Any]]:
         return self._read_recent_jsonl(self.backend_events_path, limit)
+
+    def recent_reconciliation(self, limit: int = 5) -> list[dict[str, Any]]:
+        return self._read_recent_jsonl(self.reconciliation_path, limit)
 
     def _append_jsonl(self, path: Path, payload: Mapping[str, Any]) -> None:
         if not self.enabled:

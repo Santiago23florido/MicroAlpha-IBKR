@@ -15,6 +15,8 @@ class BackendSubmissionResult:
     fills: list[FillEvent] = field(default_factory=list)
     rejection_reason: str | None = None
     terminal_status: OrderStatus | None = None
+    broker_order_id: int | None = None
+    broker_perm_id: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -24,6 +26,8 @@ class BackendSubmissionResult:
             "fills": [fill.to_dict() for fill in self.fills],
             "rejection_reason": self.rejection_reason,
             "terminal_status": None if self.terminal_status is None else self.terminal_status.value,
+            "broker_order_id": self.broker_order_id,
+            "broker_perm_id": self.broker_perm_id,
             "metadata": dict(self.metadata),
         }
 
@@ -31,6 +35,12 @@ class BackendSubmissionResult:
 class BaseExecutionBackend(ABC):
     name: str
 
+    def connect(self) -> None:
+        return None
+
+    def disconnect(self) -> None:
+        return None
+
     @abstractmethod
     def describe(self) -> dict[str, Any]:
         raise NotImplementedError
@@ -39,35 +49,43 @@ class BaseExecutionBackend(ABC):
     def submit_order(self, order: Order, market_data: Mapping[str, Any] | None = None) -> BackendSubmissionResult:
         raise NotImplementedError
 
+    def cancel_order(self, order: Order) -> dict[str, Any]:
+        raise NotImplementedError(f"{self.__class__.__name__} does not support cancel_order().")
 
-class FutureIBKRPaperBackend(BaseExecutionBackend):
-    name = "ibkr_paper"
+    def get_order_status(self, order: Order) -> dict[str, Any]:
+        raise NotImplementedError(f"{self.__class__.__name__} does not support get_order_status().")
 
-    def __init__(self, config: Phase7Config) -> None:
-        self.config = config
+    def get_open_orders(self) -> list[dict[str, Any]]:
+        return []
 
-    def describe(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "ready": False,
-            "paper_mode": self.config.execution.paper_mode,
-            "message": "Placeholder backend. Phase 7 uses the mock execution backend until IBKR paper routing is connected.",
-        }
+    def get_positions(self) -> list[dict[str, Any]]:
+        return []
 
-    def submit_order(self, order: Order, market_data: Mapping[str, Any] | None = None) -> BackendSubmissionResult:
-        raise NotImplementedError(
-            "IBKR paper backend is not implemented yet. Set ACTIVE_EXECUTION_BACKEND=mock for Phase 7."
-        )
+    def get_recent_executions(self) -> list[dict[str, Any]]:
+        return []
 
+    def healthcheck(self) -> dict[str, Any]:
+        return self.describe()
 
-def build_execution_backend(config: Phase7Config) -> BaseExecutionBackend:
-    backend_name = config.execution.active_execution_backend.strip().lower()
+def build_execution_backend(
+    config: Phase7Config,
+    *,
+    settings=None,
+    logger=None,
+    client=None,
+    backend_name: str | None = None,
+) -> BaseExecutionBackend:
+    backend_name = (backend_name or config.execution.active_execution_backend).strip().lower()
     if backend_name == "mock":
         from execution.paper_broker_mock import MockExecutionBackend
 
         return MockExecutionBackend(config)
     if backend_name in {"ibkr_paper", "ibkr-paper"}:
-        return FutureIBKRPaperBackend(config)
+        from execution.ibkr_paper_backend import IBKRPaperExecutionBackend
+
+        if settings is None:
+            raise ValueError("IBKR paper backend requires Settings to resolve broker connectivity and safety guards.")
+        return IBKRPaperExecutionBackend(config, settings=settings, logger=logger, client=client)
     raise ValueError(
         f"Unsupported execution backend {config.execution.active_execution_backend!r}. "
         "Supported values: mock, ibkr_paper."

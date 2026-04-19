@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import dotenv_values
 
 from config.loader import Settings
 
@@ -155,6 +156,11 @@ class Phase6Config:
 
 
 def load_phase6_config(settings: Settings) -> Phase6Config:
+    runtime_env = _runtime_env(settings)
+    _env_bool_local = lambda name, default: _env_bool(name, default, runtime_env)
+    _env_int_local = lambda name, default: _env_int(name, default, runtime_env)
+    _env_float_local = lambda name, default: _env_float(name, default, runtime_env)
+    _env_time_local = lambda name, default: _env_time(name, default, runtime_env)
     payload = _load_yaml(Path(settings.paths.config_dir) / PHASE6_CONFIG_FILENAME)
     defaults = payload.get("defaults", {})
     merged = _deep_merge(defaults, payload.get("environments", {}).get(settings.environment, {}))
@@ -165,38 +171,38 @@ def load_phase6_config(settings: Settings) -> Phase6Config:
 
     return Phase6Config(
         decision=DecisionConfig(
-            score_threshold=_env_float("DECISION_SCORE_THRESHOLD", float(decision_payload.get("score_threshold", 0.0))),
-            probability_threshold=_env_float(
+            score_threshold=_env_float_local("DECISION_SCORE_THRESHOLD", float(decision_payload.get("score_threshold", 0.0))),
+            probability_threshold=_env_float_local(
                 "DECISION_PROBABILITY_THRESHOLD",
                 float(decision_payload.get("probability_threshold", 0.58)),
             ),
-            predicted_return_min_bps=_env_float(
+            predicted_return_min_bps=_env_float_local(
                 "DECISION_PREDICTED_RETURN_MIN_BPS",
                 float(decision_payload.get("predicted_return_min_bps", 2.5)),
             ),
-            net_edge_min_bps=_env_float(
+            net_edge_min_bps=_env_float_local(
                 "DECISION_NET_EDGE_MIN_BPS",
                 float(decision_payload.get("net_edge_min_bps", 0.5)),
             ),
-            allow_long=_env_bool("DECISION_ALLOW_LONG", bool(decision_payload.get("allow_long", True))),
-            allow_short=_env_bool("DECISION_ALLOW_SHORT", bool(decision_payload.get("allow_short", True))),
-            spread_max_bps=_env_float(
+            allow_long=_env_bool_local("DECISION_ALLOW_LONG", bool(decision_payload.get("allow_long", True))),
+            allow_short=_env_bool_local("DECISION_ALLOW_SHORT", bool(decision_payload.get("allow_short", True))),
+            spread_max_bps=_env_float_local(
                 "DECISION_SPREAD_MAX_BPS",
                 float(decision_payload.get("spread_max_bps", 12.0)),
             ),
-            cost_max_bps=_env_float(
+            cost_max_bps=_env_float_local(
                 "DECISION_COST_MAX_BPS",
                 float(decision_payload.get("cost_max_bps", 18.0)),
             ),
-            allowed_trading_start=_env_time(
+            allowed_trading_start=_env_time_local(
                 "DECISION_ALLOWED_TRADING_START",
                 str(decision_payload.get("allowed_trading_start", "09:35")),
             ),
-            allowed_trading_end=_env_time(
+            allowed_trading_end=_env_time_local(
                 "DECISION_ALLOWED_TRADING_END",
                 str(decision_payload.get("allowed_trading_end", "15:30")),
             ),
-            max_quantile_interval_width_bps=_env_float(
+            max_quantile_interval_width_bps=_env_float_local(
                 "DECISION_MAX_QUANTILE_INTERVAL_WIDTH_BPS",
                 float(decision_payload.get("max_quantile_interval_width_bps", 35.0)),
             ),
@@ -204,73 +210,74 @@ def load_phase6_config(settings: Settings) -> Phase6Config:
             explain_feature_columns=tuple(str(value) for value in decision_payload.get("explain_feature_columns", [])),
         ),
         risk=RiskEngineConfig(
-            enabled=_env_bool("RISK_ENABLED", bool(risk_payload.get("enabled", True))),
-            max_trades_per_session=_env_int(
+            enabled=_env_bool_local("RISK_ENABLED", bool(risk_payload.get("enabled", True))),
+            max_trades_per_session=_env_int_local(
                 "RISK_MAX_TRADES_PER_SESSION",
                 int(risk_payload.get("max_trades_per_session", 4)),
             ),
-            daily_loss_limit_bps=_env_float(
+            daily_loss_limit_bps=_env_float_local(
                 "RISK_DAILY_LOSS_LIMIT_BPS",
                 float(risk_payload.get("daily_loss_limit_bps", 40.0)),
             ),
-            symbol_loss_limit_bps=_env_float(
+            symbol_loss_limit_bps=_env_float_local(
                 "RISK_SYMBOL_LOSS_LIMIT_BPS",
                 float(risk_payload.get("symbol_loss_limit_bps", 25.0)),
             ),
-            cooldown_minutes=_env_int(
+            cooldown_minutes=_env_int_local(
                 "RISK_COOLDOWN_MINUTES",
                 int(risk_payload.get("cooldown_minutes", 20)),
             ),
-            max_spread_bps=_env_float(
+            max_spread_bps=_env_float_local(
                 "RISK_MAX_SPREAD_BPS",
                 float(risk_payload.get("max_spread_bps", 12.0)),
             ),
-            max_estimated_cost_bps=_env_float(
+            max_estimated_cost_bps=_env_float_local(
                 "RISK_MAX_ESTIMATED_COST_BPS",
                 float(risk_payload.get("max_estimated_cost_bps", 18.0)),
             ),
-            kill_switch_on_invalid_model=_env_bool(
+            kill_switch_on_invalid_model=_env_bool_local(
                 "RISK_KILL_SWITCH_ON_INVALID_MODEL",
                 bool(risk_payload.get("kill_switch_on_invalid_model", True)),
             ),
-            kill_switch_on_anomalous_prediction=_env_bool(
+            kill_switch_on_anomalous_prediction=_env_bool_local(
                 "RISK_KILL_SWITCH_ON_ANOMALOUS_PREDICTION",
                 bool(risk_payload.get("kill_switch_on_anomalous_prediction", True)),
             ),
         ),
         sizing=SizingConfig(
-            default_position_size=_env_int(
+            default_position_size=_env_int_local(
                 "POSITION_SIZE_DEFAULT",
                 int(sizing_payload.get("default_position_size", 1)),
             ),
-            max_position_size=_env_int(
+            max_position_size=_env_int_local(
                 "POSITION_SIZE_MAX",
                 int(sizing_payload.get("max_position_size", 3)),
             ),
-            min_confidence_for_full_size=_env_float(
+            min_confidence_for_full_size=_env_float_local(
                 "POSITION_MIN_CONFIDENCE_FOR_FULL_SIZE",
                 float(sizing_payload.get("min_confidence_for_full_size", 0.72)),
             ),
-            min_size_confidence_floor=_env_float(
+            min_size_confidence_floor=_env_float_local(
                 "POSITION_MIN_CONFIDENCE_FLOOR",
                 float(sizing_payload.get("min_size_confidence_floor", 0.55)),
             ),
         ),
         logging=DecisionLoggingConfig(
-            enabled=_env_bool("DECISION_LOGGING_ENABLED", bool(logging_payload.get("enabled", True))),
+            enabled=_env_bool_local("DECISION_LOGGING_ENABLED", bool(logging_payload.get("enabled", True))),
             decision_log_path=_resolve_path(
                 settings,
-                os.getenv("DECISION_LOG_PATH", str(logging_payload.get("decision_log_path", "data/reports/decisions/decision_log.jsonl"))),
+                runtime_env.get("DECISION_LOG_PATH", str(logging_payload.get("decision_log_path", "data/reports/decisions/decision_log.jsonl"))),
             ),
             report_dir=_resolve_path(
                 settings,
-                os.getenv("PHASE6_REPORT_DIR", str(logging_payload.get("report_dir", "data/reports/phase6"))),
+                runtime_env.get("PHASE6_REPORT_DIR", str(logging_payload.get("report_dir", "data/reports/phase6"))),
             ),
         ),
     )
 
 
 def load_active_model_selection(settings: Settings) -> ActiveModelSelection:
+    runtime_env = _runtime_env(settings)
     path = Path(settings.paths.config_dir) / ACTIVE_MODEL_FILENAME
     selection = None
     if path.exists():
@@ -279,9 +286,9 @@ def load_active_model_selection(settings: Settings) -> ActiveModelSelection:
         if selection_payload:
             selection = _selection_from_payload(selection_payload)
 
-    override_run_id = os.getenv("ACTIVE_MODEL_RUN_ID")
-    override_artifact_dir = os.getenv("ACTIVE_MODEL_ARTIFACT_DIR")
-    override_model_name = os.getenv("ACTIVE_MODEL_NAME")
+    override_run_id = runtime_env.get("ACTIVE_MODEL_RUN_ID")
+    override_artifact_dir = runtime_env.get("ACTIVE_MODEL_ARTIFACT_DIR")
+    override_model_name = runtime_env.get("ACTIVE_MODEL_NAME")
     if override_run_id or override_artifact_dir or override_model_name:
         candidate = resolve_phase5_artifact(
             settings,
@@ -576,25 +583,34 @@ def _resolve_relative_path(settings: Settings, value: str) -> Path:
     return path.resolve()
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
+def _runtime_env(settings: Settings) -> dict[str, str]:
+    file_env = {
+        key: str(value)
+        for key, value in dotenv_values(settings.env_file if settings.env_file else None).items()
+        if value is not None
+    }
+    return {**file_env, **os.environ}
+
+
+def _env_bool(name: str, default: bool, env: dict[str, str] | None = None) -> bool:
+    raw = (env or os.environ).get(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
+def _env_int(name: str, default: int, env: dict[str, str] | None = None) -> int:
+    raw = (env or os.environ).get(name)
     return default if raw is None else int(raw)
 
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
+def _env_float(name: str, default: float, env: dict[str, str] | None = None) -> float:
+    raw = (env or os.environ).get(name)
     return default if raw is None else float(raw)
 
 
-def _env_time(name: str, default: str) -> time:
-    raw = os.getenv(name, default)
+def _env_time(name: str, default: str, env: dict[str, str] | None = None) -> time:
+    raw = (env or os.environ).get(name, default)
     try:
         return time.fromisoformat(raw)
     except ValueError as exc:
