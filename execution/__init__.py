@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from execution.backend import BaseExecutionBackend, BackendSubmissionResult, FutureIBKRPaperBackend, build_execution_backend
+from execution.backend import BaseExecutionBackend, BackendSubmissionResult, build_execution_backend
+from execution.ibkr_paper_backend import IBKRPaperExecutionBackend
 from execution.journal import ExecutionJournal
+from execution.ibkr_state_mapper import map_ibkr_status
 from execution.models import (
     ExecutionReport,
     FillApplicationResult,
@@ -28,7 +30,7 @@ __all__ = [
     "ExecutionReport",
     "FillApplicationResult",
     "FillEvent",
-    "FutureIBKRPaperBackend",
+    "IBKRPaperExecutionBackend",
     "MockExecutionBackend",
     "ModelTrace",
     "Order",
@@ -46,4 +48,5 @@ __all__ = [
     "PositionManager",
     "PositionState",
     "build_execution_backend",
+    "map_ibkr_status",
 ]

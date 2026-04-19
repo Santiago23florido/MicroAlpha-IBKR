@@ -15,6 +15,7 @@ JSONISH_COLUMNS = {
     "portfolio_before",
     "portfolio_after",
     "decision_metadata",
+    "execution_discrepancy_flags",
 }
 
 

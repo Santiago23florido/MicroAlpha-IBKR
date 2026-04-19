@@ -275,6 +275,7 @@ class Settings:
     lan_sync: LanSyncSettings = field(default_factory=LanSyncSettings)
     paths: PathSettings = field(default_factory=PathSettings)
     deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
+    env_file: str | None = None
 
     @property
     def ib_host(self) -> str:
@@ -898,4 +899,5 @@ def load_settings(
         ),
         paths=paths,
         deployment=deployment,
+        env_file=str(env_path),
     )

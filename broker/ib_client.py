@@ -19,6 +19,8 @@ from broker.orders import (
     create_limit_order,
     create_market_order,
     create_marketable_limit_order,
+    create_stop_limit_order,
+    create_stop_order,
 )
 from storage.executions import ExecutionAuditStore
 
@@ -93,6 +95,7 @@ class _IBGatewayApp(EWrapper, EClient):
         self.historical_data_rows: dict[int, list[dict[str, Any]]] = {}
         self.order_statuses: dict[int, dict[str, Any]] = {}
         self.order_execution_details: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        self.execution_commission_reports: dict[str, dict[str, Any]] = {}
         self.account_summary_rows: dict[int, list[dict[str, str]]] = {}
         self.positions_rows: list[dict[str, Any]] = []
         self.open_orders_rows: list[dict[str, Any]] = []
@@ -226,6 +229,7 @@ class _IBGatewayApp(EWrapper, EClient):
                 {
                     "order_id": orderId,
                     "parent_order_id": getattr(order, "parentId", 0) or None,
+                    "broker_perm_id": getattr(order, "permId", 0) or payload.get("broker_perm_id"),
                     "symbol": contract.symbol,
                     "action": order.action,
                     "quantity": order.totalQuantity,
@@ -289,6 +293,10 @@ class _IBGatewayApp(EWrapper, EClient):
                 {
                     "order_id": orderId,
                     "parent_order_id": parentId or payload.get("parent_order_id"),
+                    "broker_perm_id": permId or payload.get("broker_perm_id"),
+                    "client_id": clientId,
+                    "why_held": whyHeld or payload.get("why_held"),
+                    "mkt_cap_price": mktCapPrice or payload.get("mkt_cap_price"),
                     "status": status,
                     "filled_quantity": filled,
                     "remaining_quantity": remaining,
@@ -321,6 +329,7 @@ class _IBGatewayApp(EWrapper, EClient):
         details = {
             "execution_id": execution.execId,
             "order_id": execution.orderId,
+            "broker_perm_id": getattr(execution, "permId", None),
             "symbol": contract.symbol,
             "side": execution.side,
             "shares": execution.shares,
@@ -336,6 +345,7 @@ class _IBGatewayApp(EWrapper, EClient):
                 execution.orderId,
                 {
                     "order_id": execution.orderId,
+                    "broker_perm_id": getattr(execution, "permId", None),
                     "symbol": contract.symbol,
                     "action": execution.side,
                     "quantity": execution.shares,
@@ -373,6 +383,22 @@ class _IBGatewayApp(EWrapper, EClient):
 
     def execDetailsEnd(self, reqId: int) -> None:  # noqa: N802
         self.executions_event.set()
+
+    def commissionReport(self, commissionReport: Any) -> None:  # noqa: N802
+        details = {
+            "execution_id": getattr(commissionReport, "execId", None),
+            "commission": getattr(commissionReport, "commission", None),
+            "currency": getattr(commissionReport, "currency", None),
+            "realized_pnl": getattr(commissionReport, "realizedPNL", None),
+            "yield": getattr(commissionReport, "yield_", None),
+            "yield_redemption_date": getattr(commissionReport, "yieldRedemptionDate", None),
+            "timestamp_utc": _utc_now_iso(),
+        }
+        execution_id = details.get("execution_id")
+        if execution_id:
+            with self.lock:
+                self.execution_commission_reports[str(execution_id)] = details
+        self._append_audit("commission_report", details)
 
     def error(  # noqa: N802
         self,
@@ -446,7 +472,11 @@ class _IBGatewayApp(EWrapper, EClient):
 
     def _copy_order_status_locked(self, order_id: int) -> dict[str, Any]:
         payload = dict(self.order_statuses.get(order_id, {}))
-        payload["executions"] = list(self.order_execution_details.get(order_id, []))
+        executions = []
+        for execution in self.order_execution_details.get(order_id, []):
+            commission = self.execution_commission_reports.get(str(execution.get("execution_id")))
+            executions.append({**execution, "commission_report": commission})
+        payload["executions"] = executions
         return payload
 
     def _append_audit(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -857,6 +887,52 @@ class IBClient:
             f"limit order {action.upper()} {quantity} {symbol.upper()} @ {limit_price}",
         )
 
+    def submit_stop_order(
+        self,
+        *,
+        symbol: str,
+        action: str,
+        quantity: int,
+        stop_price: float,
+        exchange: str | None = None,
+        currency: str | None = None,
+    ) -> dict[str, Any]:
+        contract = self._build_contract(symbol, exchange=exchange, currency=currency)
+        order_id = self._reserve_order_ids(1)
+        order = create_stop_order(action=action, quantity=quantity, stop_price=stop_price)
+        order.orderId = order_id
+        return self._submit_orders(
+            contract,
+            [order],
+            f"stop order {action.upper()} {quantity} {symbol.upper()} stop={stop_price}",
+        )
+
+    def submit_stop_limit_order(
+        self,
+        *,
+        symbol: str,
+        action: str,
+        quantity: int,
+        stop_price: float,
+        limit_price: float,
+        exchange: str | None = None,
+        currency: str | None = None,
+    ) -> dict[str, Any]:
+        contract = self._build_contract(symbol, exchange=exchange, currency=currency)
+        order_id = self._reserve_order_ids(1)
+        order = create_stop_limit_order(
+            action=action,
+            quantity=quantity,
+            stop_price=stop_price,
+            limit_price=limit_price,
+        )
+        order.orderId = order_id
+        return self._submit_orders(
+            contract,
+            [order],
+            f"stop limit order {action.upper()} {quantity} {symbol.upper()} stop={stop_price} limit={limit_price}",
+        )
+
     def submit_marketable_limit_order(
         self,
         *,
@@ -964,7 +1040,11 @@ class IBClient:
         self.logger.info("Requesting recent execution details.")
         self._app.reqExecutions(req_id, ExecutionFilter())
         self._wait_for_event(self._app.executions_event, "recent executions", req_id=req_id)
-        return list(self._app.execution_rows)
+        rows = []
+        for row in self._app.execution_rows:
+            commission = self._app.execution_commission_reports.get(str(row.get("execution_id")))
+            rows.append({**row, "commission_report": commission})
+        return rows
 
     def close_position(
         self,

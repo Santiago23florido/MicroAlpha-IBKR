@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import dotenv_values
 
 from config.loader import Settings
 
@@ -122,6 +123,10 @@ class Phase8Config:
 
 
 def load_phase8_config(settings: Settings) -> Phase8Config:
+    runtime_env = _runtime_env(settings)
+    _env_bool_local = lambda name, default: _env_bool(name, default, runtime_env)
+    _env_int_local = lambda name, default: _env_int(name, default, runtime_env)
+    _env_float_local = lambda name, default: _env_float(name, default, runtime_env)
     payload = _load_yaml(Path(settings.paths.config_dir) / PHASE8_CONFIG_FILENAME)
     defaults = payload.get("defaults", {})
     merged = _deep_merge(defaults, payload.get("environments", {}).get(settings.environment, {}))
@@ -134,30 +139,30 @@ def load_phase8_config(settings: Settings) -> Phase8Config:
 
     return Phase8Config(
         performance_thresholds=PerformanceThresholdConfig(
-            min_trades_required=_env_int("EVAL_MIN_TRADES_REQUIRED", int(performance_payload.get("min_trades_required", 5))),
-            min_win_rate=_env_float("EVAL_MIN_WIN_RATE", float(performance_payload.get("min_win_rate", 0.45))),
-            max_drawdown=_env_float("EVAL_MAX_DRAWDOWN", float(performance_payload.get("max_drawdown", 500.0))),
-            min_expectancy=_env_float("EVAL_MIN_EXPECTANCY", float(performance_payload.get("min_expectancy", 0.0))),
-            min_total_pnl=_env_float("EVAL_MIN_TOTAL_PNL", float(performance_payload.get("min_total_pnl", 0.0))),
+            min_trades_required=_env_int_local("EVAL_MIN_TRADES_REQUIRED", int(performance_payload.get("min_trades_required", 5))),
+            min_win_rate=_env_float_local("EVAL_MIN_WIN_RATE", float(performance_payload.get("min_win_rate", 0.45))),
+            max_drawdown=_env_float_local("EVAL_MAX_DRAWDOWN", float(performance_payload.get("max_drawdown", 500.0))),
+            min_expectancy=_env_float_local("EVAL_MIN_EXPECTANCY", float(performance_payload.get("min_expectancy", 0.0))),
+            min_total_pnl=_env_float_local("EVAL_MIN_TOTAL_PNL", float(performance_payload.get("min_total_pnl", 0.0))),
         ),
         drift_thresholds=DriftThresholdConfig(
-            feature_psi_warning=_env_float("EVAL_FEATURE_PSI_WARNING", float(drift_payload.get("feature_psi_warning", 0.2))),
-            feature_psi_critical=_env_float("EVAL_FEATURE_PSI_CRITICAL", float(drift_payload.get("feature_psi_critical", 0.35))),
-            prediction_psi_warning=_env_float("EVAL_PREDICTION_PSI_WARNING", float(drift_payload.get("prediction_psi_warning", 0.2))),
-            label_psi_warning=_env_float("EVAL_LABEL_PSI_WARNING", float(drift_payload.get("label_psi_warning", 0.2))),
-            mean_shift_sigma_warning=_env_float(
+            feature_psi_warning=_env_float_local("EVAL_FEATURE_PSI_WARNING", float(drift_payload.get("feature_psi_warning", 0.2))),
+            feature_psi_critical=_env_float_local("EVAL_FEATURE_PSI_CRITICAL", float(drift_payload.get("feature_psi_critical", 0.35))),
+            prediction_psi_warning=_env_float_local("EVAL_PREDICTION_PSI_WARNING", float(drift_payload.get("prediction_psi_warning", 0.2))),
+            label_psi_warning=_env_float_local("EVAL_LABEL_PSI_WARNING", float(drift_payload.get("label_psi_warning", 0.2))),
+            mean_shift_sigma_warning=_env_float_local(
                 "EVAL_MEAN_SHIFT_SIGMA_WARNING",
                 float(drift_payload.get("mean_shift_sigma_warning", 1.5)),
             ),
-            degenerate_output_std_floor=_env_float(
+            degenerate_output_std_floor=_env_float_local(
                 "EVAL_DEGENERATE_OUTPUT_STD_FLOOR",
                 float(drift_payload.get("degenerate_output_std_floor", 1e-6)),
             ),
         ),
         evaluation_window=EvaluationWindowConfig(
-            reference_days=_env_int("EVAL_REFERENCE_DAYS", int(window_payload.get("reference_days", 5))),
-            compare_run_limit=_env_int("EVAL_COMPARE_RUN_LIMIT", int(window_payload.get("compare_run_limit", 10))),
-            min_samples_for_drift=_env_int(
+            reference_days=_env_int_local("EVAL_REFERENCE_DAYS", int(window_payload.get("reference_days", 5))),
+            compare_run_limit=_env_int_local("EVAL_COMPARE_RUN_LIMIT", int(window_payload.get("compare_run_limit", 10))),
+            min_samples_for_drift=_env_int_local(
                 "EVAL_MIN_SAMPLES_FOR_DRIFT",
                 int(window_payload.get("min_samples_for_drift", 25)),
             ),
@@ -165,38 +170,38 @@ def load_phase8_config(settings: Settings) -> Phase8Config:
         report_paths=Phase8ReportPathConfig(
             report_dir=_resolve_path(
                 settings,
-                str(report_payload.get("report_dir", os.getenv("EVAL_REPORT_DIR", "data/reports/phase8"))),
+                str(report_payload.get("report_dir", runtime_env.get("EVAL_REPORT_DIR", "data/reports/phase8"))),
             ),
             economic_leaderboard_path=_resolve_path(
                 settings,
                 str(
                     report_payload.get(
                         "economic_leaderboard_path",
-                        os.getenv("EVAL_ECONOMIC_LEADERBOARD_PATH", "data/reports/phase5/economic_leaderboard_latest.csv"),
+                        runtime_env.get("EVAL_ECONOMIC_LEADERBOARD_PATH", "data/reports/phase5/economic_leaderboard_latest.csv"),
                     )
                 ),
             ),
             compare_runs_dir=_resolve_path(
                 settings,
-                str(report_payload.get("compare_runs_dir", os.getenv("EVAL_COMPARE_RUNS_DIR", "data/reports/phase8/comparisons"))),
+                str(report_payload.get("compare_runs_dir", runtime_env.get("EVAL_COMPARE_RUNS_DIR", "data/reports/phase8/comparisons"))),
             ),
         ),
         alert_flags=AlertFlagConfig(
-            alert_on_negative_pnl=_env_bool("EVAL_ALERT_NEGATIVE_PNL", bool(alert_payload.get("alert_on_negative_pnl", True))),
-            alert_on_low_win_rate=_env_bool("EVAL_ALERT_LOW_WIN_RATE", bool(alert_payload.get("alert_on_low_win_rate", True))),
-            alert_on_high_drawdown=_env_bool("EVAL_ALERT_HIGH_DRAWDOWN", bool(alert_payload.get("alert_on_high_drawdown", True))),
-            alert_on_feature_drift=_env_bool("EVAL_ALERT_FEATURE_DRIFT", bool(alert_payload.get("alert_on_feature_drift", True))),
-            alert_on_prediction_drift=_env_bool(
+            alert_on_negative_pnl=_env_bool_local("EVAL_ALERT_NEGATIVE_PNL", bool(alert_payload.get("alert_on_negative_pnl", True))),
+            alert_on_low_win_rate=_env_bool_local("EVAL_ALERT_LOW_WIN_RATE", bool(alert_payload.get("alert_on_low_win_rate", True))),
+            alert_on_high_drawdown=_env_bool_local("EVAL_ALERT_HIGH_DRAWDOWN", bool(alert_payload.get("alert_on_high_drawdown", True))),
+            alert_on_feature_drift=_env_bool_local("EVAL_ALERT_FEATURE_DRIFT", bool(alert_payload.get("alert_on_feature_drift", True))),
+            alert_on_prediction_drift=_env_bool_local(
                 "EVAL_ALERT_PREDICTION_DRIFT",
                 bool(alert_payload.get("alert_on_prediction_drift", True)),
             ),
-            alert_on_label_drift=_env_bool("EVAL_ALERT_LABEL_DRIFT", bool(alert_payload.get("alert_on_label_drift", False))),
-            alert_on_degenerate_outputs=_env_bool(
+            alert_on_label_drift=_env_bool_local("EVAL_ALERT_LABEL_DRIFT", bool(alert_payload.get("alert_on_label_drift", False))),
+            alert_on_degenerate_outputs=_env_bool_local(
                 "EVAL_ALERT_DEGENERATE_OUTPUTS",
                 bool(alert_payload.get("alert_on_degenerate_outputs", True)),
             ),
         ),
-        auto_generate_after_phase7=_env_bool(
+        auto_generate_after_phase7=_env_bool_local(
             "EVAL_AUTO_GENERATE_AFTER_PHASE7",
             bool(merged.get("auto_generate_after_phase7", True)),
         ),
@@ -229,8 +234,8 @@ def _resolve_path(settings: Settings, value: str) -> str:
     return str(path.resolve())
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw_value = os.getenv(name)
+def _env_bool(name: str, default: bool, env: dict[str, str] | None = None) -> bool:
+    raw_value = (env or os.environ).get(name)
     if raw_value is None:
         return default
     normalized = raw_value.strip().lower()
@@ -241,15 +246,24 @@ def _env_bool(name: str, default: bool) -> bool:
     raise ValueError(f"Invalid boolean value for {name}: {raw_value!r}.")
 
 
-def _env_int(name: str, default: int) -> int:
-    raw_value = os.getenv(name)
+def _env_int(name: str, default: int, env: dict[str, str] | None = None) -> int:
+    raw_value = (env or os.environ).get(name)
     if raw_value is None:
         return default
     return int(raw_value)
 
 
-def _env_float(name: str, default: float) -> float:
-    raw_value = os.getenv(name)
+def _env_float(name: str, default: float, env: dict[str, str] | None = None) -> float:
+    raw_value = (env or os.environ).get(name)
     if raw_value is None:
         return default
     return float(raw_value)
+
+
+def _runtime_env(settings: Settings) -> dict[str, str]:
+    file_env = {
+        key: str(value)
+        for key, value in dotenv_values(settings.env_file if settings.env_file else None).items()
+        if value is not None
+    }
+    return {**file_env, **os.environ}
