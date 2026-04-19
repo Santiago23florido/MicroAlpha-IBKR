@@ -42,6 +42,34 @@ def create_limit_order(
     return order
 
 
+def create_stop_order(
+    action: str,
+    quantity: int,
+    stop_price: float,
+    *,
+    transmit: bool = True,
+) -> Order:
+    order = _build_order_base(action, quantity, transmit=transmit)
+    order.orderType = "STP"
+    order.auxPrice = float(stop_price)
+    return order
+
+
+def create_stop_limit_order(
+    action: str,
+    quantity: int,
+    stop_price: float,
+    limit_price: float,
+    *,
+    transmit: bool = True,
+) -> Order:
+    order = _build_order_base(action, quantity, transmit=transmit)
+    order.orderType = "STP LMT"
+    order.auxPrice = float(stop_price)
+    order.lmtPrice = float(limit_price)
+    return order
+
+
 def calculate_marketable_limit_price(
     *,
     action: str,

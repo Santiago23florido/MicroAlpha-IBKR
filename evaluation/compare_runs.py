@@ -106,6 +106,7 @@ def _comparison_row(report: dict[str, Any]) -> dict[str, Any]:
     performance = dict(report.get("performance_summary", {}) or {})
     drift = dict(report.get("drift_summary", {}) or {})
     signal = dict(report.get("signal_summary", {}) or {})
+    execution = dict(report.get("execution_summary", {}) or {})
     return {
         "run_id": report.get("run_id"),
         "run_label": report.get("run_label"),
@@ -114,6 +115,7 @@ def _comparison_row(report: dict[str, Any]) -> dict[str, Any]:
         "model_name": report.get("model_name"),
         "feature_set_name": report.get("feature_set_name"),
         "target_mode": report.get("target_mode"),
+        "backend_name": report.get("backend_name"),
         "session_total_pnl": performance.get("session_total_pnl"),
         "portfolio_total_pnl": performance.get("portfolio_total_pnl"),
         "win_rate": performance.get("win_rate"),
@@ -122,6 +124,12 @@ def _comparison_row(report: dict[str, Any]) -> dict[str, Any]:
         "sharpe_ratio_simple": performance.get("sharpe_ratio_simple"),
         "max_drawdown": performance.get("max_drawdown"),
         "closed_trade_count": performance.get("closed_trade_count"),
+        "fill_ratio_mean": execution.get("fill_ratio_mean"),
+        "rejection_rate": execution.get("rejection_rate"),
+        "cancel_rate": execution.get("cancel_rate"),
+        "avg_submit_to_ack_ms": execution.get("avg_submit_to_ack_ms"),
+        "avg_submit_to_final_fill_ms": execution.get("avg_submit_to_final_fill_ms"),
+        "avg_execution_slippage_bps": execution.get("avg_execution_slippage_bps"),
         "alert_count": len(report.get("alerts", [])),
         "data_drift_max_psi": drift.get("data_drift_max_psi"),
         "prediction_drift_max_psi": drift.get("prediction_drift_max_psi"),

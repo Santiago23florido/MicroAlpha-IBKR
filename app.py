@@ -18,7 +18,14 @@ from config import Settings, load_settings
 from config.phase6 import set_active_model_selection
 from deployment.lan_sync import pull_from_pc2
 from engine.phase6 import risk_check, run_decisions_offline, run_session, show_active_model
-from engine.phase7 import execution_status, run_paper_session, run_paper_sim_offline, show_execution_backend
+from engine.phase7 import (
+    broker_healthcheck,
+    execution_status,
+    run_paper_session,
+    run_paper_session_real,
+    run_paper_sim_offline,
+    show_execution_backend,
+)
 from engine.runtime import RuntimeServices, build_runtime
 from features.feature_pipeline import (
     inspect_feature_dependencies_for_build,
@@ -178,6 +185,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "show-execution-backend",
         help="Show the configured Phase 7 execution backend and the active paper-execution settings.",
+    )
+
+    subparsers.add_parser(
+        "broker-healthcheck",
+        help="Connect to IBKR Paper, validate paper-mode safety guards, and print broker connectivity status.",
     )
 
     execution_status_parser = subparsers.add_parser(
@@ -340,6 +352,15 @@ def build_parser() -> argparse.ArgumentParser:
     paper_session_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     paper_session_parser.add_argument("--latest-per-symbol", type=int, help="How many latest rows per symbol to evaluate.")
     paper_session_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    real_paper_session_parser = subparsers.add_parser(
+        "run-paper-session-real",
+        help="Run one operational paper session against the real IBKR Paper backend using the active model and risk checks.",
+    )
+    real_paper_session_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    real_paper_session_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    real_paper_session_parser.add_argument("--latest-per-symbol", type=int, help="How many latest rows per symbol to evaluate.")
+    real_paper_session_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
 
     dashboard_parser = subparsers.add_parser(
         "dashboard",
@@ -572,6 +593,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print_result(show_execution_backend(settings))
             return 0
 
+        if args.command == "broker-healthcheck":
+            print_result(broker_healthcheck(settings))
+            return 0
+
         if args.command == "execution-status":
             print_result(execution_status(settings, limit=args.limit))
             return 0
@@ -738,6 +763,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "run-paper-session":
             print_result(
                 run_paper_session(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    latest_per_symbol=args.latest_per_symbol,
+                    decision_log_path=args.decision_log_path,
+                )
+            )
+            return 0
+
+        if args.command == "run-paper-session-real":
+            print_result(
+                run_paper_session_real(
                     settings,
                     symbols=args.symbols,
                     feature_root=args.feature_root,

@@ -59,6 +59,9 @@ class OrderManager:
                 updated_at=str(payload.get("updated_at")),
                 source_model_name=str(payload.get("source_model_name")),
                 source_decision_id=str(payload.get("source_decision_id")),
+                backend_name=payload.get("backend_name"),
+                broker_order_id=_coerce_optional_int(payload.get("broker_order_id")),
+                broker_perm_id=_coerce_optional_int(payload.get("broker_perm_id")),
                 limit_price=_coerce_optional_float(payload.get("limit_price")),
                 stop_price=_coerce_optional_float(payload.get("stop_price")),
                 filled_quantity=int(payload.get("filled_quantity", 0) or 0),
@@ -98,6 +101,7 @@ class OrderManager:
             updated_at=created_at,
             source_model_name=request.source_model_name,
             source_decision_id=request.source_decision_id,
+            backend_name=self.backend.name,
             metadata=dict(request.metadata),
         )
         self.orders[order.order_id] = order
@@ -128,6 +132,7 @@ class OrderManager:
 
         order = self._transition(order, OrderStatus.SUBMITTED, reports, message="Order submitted to execution backend.")
         backend_result = self.backend.submit_order(order, market_data)
+        order = self._merge_backend_identity(order, backend_result)
         self.journal.append_backend_event(
             {
                 "order_id": order.order_id,
@@ -135,6 +140,19 @@ class OrderManager:
                 "source_decision_id": order.source_decision_id,
                 "backend_name": backend_result.backend_name,
                 "payload": backend_result.to_dict(),
+            }
+        )
+        self.journal.append_reconciliation(
+            {
+                "stage": "submission_result",
+                "order_id": order.order_id,
+                "symbol": order.symbol,
+                "source_decision_id": order.source_decision_id,
+                "source_model_name": order.source_model_name,
+                "backend_name": backend_result.backend_name,
+                "broker_order_id": order.broker_order_id,
+                "broker_perm_id": order.broker_perm_id,
+                "metadata": dict(backend_result.metadata),
             }
         )
 
@@ -173,6 +191,23 @@ class OrderManager:
                 self.orders[order.order_id] = order
                 self.journal.append_fill(fill)
                 self.journal.append_order(order)
+                self.journal.append_reconciliation(
+                    {
+                        "stage": "fill",
+                        "order_id": order.order_id,
+                        "broker_order_id": fill.broker_order_id,
+                        "execution_id": fill.execution_id,
+                        "fill_id": fill.fill_id,
+                        "symbol": fill.symbol,
+                        "source_decision_id": fill.source_decision_id,
+                        "source_model_name": fill.source_model_name,
+                        "backend_name": fill.backend_name,
+                        "quantity": fill.quantity,
+                        "fill_price": fill.fill_price,
+                        "filled_at": fill.filled_at,
+                        "metadata": dict(fill.metadata),
+                    }
+                )
                 fill_result = self.position_manager.apply_fill(fill)
                 realized_pnl_delta += fill_result.realized_pnl_delta
                 if fill_result.realized_return_bps is not None:
@@ -280,6 +315,7 @@ class OrderManager:
         metadata = {
             "decision_action": raw_action,
             "decision_snapshot": dict(decision),
+            "decision_generated_at_utc": decision.get("decision_generated_at_utc"),
             "model_trace": model_trace.to_dict(),
             "run_id": model_trace.run_id,
             "feature_set_name": model_trace.feature_set_name,
@@ -309,6 +345,26 @@ class OrderManager:
         for field in ("run_id", "feature_set_name", "target_mode", "artifact_dir"):
             if not model_trace.get(field):
                 errors.append(f"missing_model_trace_{field}")
+
+        decision_snapshot = dict(order.metadata.get("decision_snapshot", {}) or {})
+        if self.backend.name == "ibkr_paper":
+            if self.config.ibkr_paper.broker_mode.strip().lower() != "paper":
+                errors.append(f"broker_mode_must_be_paper:{self.config.ibkr_paper.broker_mode}")
+            if not self.config.execution.paper_mode:
+                errors.append("paper_mode_disabled")
+            if not self.config.ibkr_paper.safe_to_trade:
+                errors.append("safe_to_trade_disabled")
+            if not self.config.ibkr_paper.allow_session_execution:
+                errors.append("allow_session_execution_disabled")
+            if self.config.ibkr_paper.supported_symbols and order.symbol not in set(self.config.ibkr_paper.supported_symbols):
+                errors.append(f"symbol_not_supported:{order.symbol}")
+            if not decision_snapshot:
+                errors.append("missing_decision_snapshot")
+            if decision_snapshot.get("blocked_by_risk"):
+                errors.append("decision_blocked_by_risk")
+            risk_checks = dict(decision_snapshot.get("risk_checks", {}) or {})
+            if not risk_checks:
+                errors.append("missing_risk_checks")
 
         current_quantity = self.position_manager.current_quantity(order.symbol)
         projected_quantity = current_quantity
@@ -345,7 +401,17 @@ class OrderManager:
         metadata: Mapping[str, Any] | None = None,
         backend_name: str | None = None,
     ) -> Order:
-        updated = self.state_machine.transition(order, target, updated_at=utc_now_iso())
+        merged_metadata = {**dict(order.metadata), **dict(metadata or {})}
+        updated = self.state_machine.transition(
+            order.replace(
+                metadata=merged_metadata,
+                backend_name=backend_name or order.backend_name or self.backend.name,
+                broker_order_id=_coerce_optional_int(merged_metadata.get("broker_order_id")) or order.broker_order_id,
+                broker_perm_id=_coerce_optional_int(merged_metadata.get("broker_perm_id")) or order.broker_perm_id,
+            ),
+            target,
+            updated_at=utc_now_iso(),
+        )
         self.orders[updated.order_id] = updated
         self.journal.append_order(updated)
         report = self._build_report(
@@ -377,6 +443,7 @@ class OrderManager:
             created_at=utc_now_iso(),
             source_model_name=order.source_model_name,
             source_decision_id=order.source_decision_id,
+            broker_order_id=order.broker_order_id,
             message=message,
             metadata=dict(metadata or {}),
         )
@@ -408,9 +475,33 @@ class OrderManager:
             return OrderAction.COVER, min(abs(current_quantity), desired_quantity)
         raise OrderValidationError(f"Unsupported decision action {decision_action!r}.")
 
+    @staticmethod
+    def _merge_backend_identity(order: Order, backend_result) -> Order:
+        metadata = {**dict(order.metadata), **dict(backend_result.metadata or {})}
+        merged = order.replace(
+            metadata=metadata,
+            backend_name=backend_result.backend_name or order.backend_name,
+            broker_order_id=_coerce_optional_int(
+                metadata.get("broker_order_id", backend_result.broker_order_id)
+            )
+            or order.broker_order_id,
+            broker_perm_id=_coerce_optional_int(
+                metadata.get("broker_perm_id", backend_result.broker_perm_id)
+            )
+            or order.broker_perm_id,
+        )
+        return merged
+
 
 def _coerce_optional_float(value: Any) -> float | None:
     try:
         return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    try:
+        return None if value is None else int(value)
     except (TypeError, ValueError):
         return None
