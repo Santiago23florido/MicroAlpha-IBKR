@@ -17,11 +17,14 @@ def plan_historical_bar_chunks(
     *,
     earliest_timestamp: str,
     latest_timestamp: str | None = None,
+    start_timestamp: str | None = None,
     bar_size: str,
     chunk_days_1m: int,
     chunk_days_intraday_fallback: int,
 ) -> list[HistoricalChunk]:
     start = _parse_iso(earliest_timestamp)
+    if start_timestamp:
+        start = max(start, _parse_iso(start_timestamp))
     end = _parse_iso(latest_timestamp) if latest_timestamp else datetime.now(timezone.utc)
     if end <= start:
         raise ValueError("Latest timestamp must be after the earliest timestamp.")

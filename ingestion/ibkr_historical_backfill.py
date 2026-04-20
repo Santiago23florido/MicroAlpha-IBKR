@@ -73,9 +73,37 @@ def ibkr_backfill(
     use_rth: bool | None = None,
     resume: bool = False,
     earliest_timestamp: str | None = None,
+    start_date: str | None = None,
 ) -> dict[str, Any]:
     config = load_ibkr_historical_config(settings)
     services = _build_services(settings, config)
+    return _ibkr_backfill_with_services(
+        settings,
+        config=config,
+        services=services,
+        symbol=symbol,
+        what_to_show=what_to_show,
+        bar_size=bar_size,
+        use_rth=use_rth,
+        resume=resume,
+        earliest_timestamp=earliest_timestamp,
+        start_date=start_date,
+    )
+
+
+def _ibkr_backfill_with_services(
+    settings: Settings,
+    *,
+    config: IBKRHistoricalConfig,
+    services: HistoricalBackfillServices,
+    symbol: str,
+    what_to_show: str,
+    bar_size: str,
+    use_rth: bool | None = None,
+    resume: bool = False,
+    earliest_timestamp: str | None = None,
+    start_date: str | None = None,
+) -> dict[str, Any]:
     _ensure_historical_enabled(config)
     resolved_symbol = validate_symbol(symbol)
     resolved_what = validate_what_to_show(what_to_show)
@@ -84,9 +112,15 @@ def ibkr_backfill(
     handle = services.resume_store.resolve(symbol=resolved_symbol, what_to_show=resolved_what, bar_size=resolved_bar_size)
     state = services.resume_store.load(handle) if (resume and config.enable_resume) else {}
     now = datetime.now(timezone.utc).isoformat()
+    persisted_chunk_indices = _existing_chunk_indices(handle)
+    reported_chunk_indices = set(state.get("completed_chunk_indices", [])) if resume else set()
+    completed_indices = set(persisted_chunk_indices)
+    lost_unpersisted_count = max(0, len(reported_chunk_indices - completed_indices))
 
+    opened_here = not _client_is_connected(services.client)
     try:
-        services.client.connect()
+        if opened_here:
+            services.client.connect()
         if earliest_timestamp is None:
             head = services.client.get_head_timestamp(
                 symbol=resolved_symbol,
@@ -101,16 +135,15 @@ def ibkr_backfill(
         chunks = plan_historical_bar_chunks(
             earliest_timestamp=earliest,
             latest_timestamp=state.get("planned_latest_timestamp"),
+            start_timestamp=start_date,
             bar_size=resolved_bar_size,
             chunk_days_1m=config.chunk_days_1m,
             chunk_days_intraday_fallback=config.chunk_days_intraday_fallback,
         )
-        completed_indices = set(state.get("completed_chunk_indices", [])) if resume else set()
-        existing_frame = _load_existing_raw_frame(handle.raw_path)
-        all_frames = [existing_frame] if not existing_frame.empty else []
         request_count = int(state.get("request_count", 0))
         retry_count = int(state.get("retry_count", 0))
         pacing_wait_seconds = float(state.get("pacing_wait_seconds", 0.0))
+        persisted_ranges = _frame_ranges(_load_persisted_backfill_frame(handle))
 
         for chunk in chunks:
             if chunk.index in completed_indices:
@@ -143,7 +176,8 @@ def ibkr_backfill(
                     bar_size=resolved_bar_size,
                     what_to_show=resolved_what,
                 )
-                all_frames.append(frame)
+                _write_chunk_frame(frame, handle, chunk.index)
+                persisted_ranges = _update_ranges(persisted_ranges, frame)
             completed_indices.add(chunk.index)
             latest_downloaded = max((c.end_utc for c in chunks if c.index in completed_indices), default=earliest)
             state = {
@@ -154,20 +188,28 @@ def ibkr_backfill(
                 "bar_size": resolved_bar_size,
                 "use_rth": resolved_use_rth,
                 "earliest_timestamp": earliest,
+                "requested_start_date": start_date,
                 "planned_latest_timestamp": chunks[-1].end_utc if chunks else earliest,
                 "latest_timestamp_downloaded": latest_downloaded,
                 "completed_chunk_indices": sorted(completed_indices),
+                "persisted_chunk_indices": sorted(completed_indices),
                 "chunk_count": len(chunks),
+                "pending_chunk_count": max(0, len(chunks) - len(completed_indices)),
                 "request_count": request_count,
                 "retry_count": retry_count,
+                "lost_unpersisted_progress_count": lost_unpersisted_count,
                 "pacing_wait_seconds": round(pacing_wait_seconds, 4),
+                "persisted_row_count": persisted_ranges["row_count"],
+                "persisted_min_timestamp": persisted_ranges["min_timestamp"],
+                "persisted_max_timestamp": persisted_ranges["max_timestamp"],
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "raw_output_path": str(handle.raw_path),
                 "manifest_path": str(handle.manifest_path),
+                "chunk_dir": str(handle.chunk_dir),
             }
             services.resume_store.save(handle, state)
 
-        merged = _merge_frames(all_frames)
+        merged = _load_persisted_backfill_frame(handle)
         _write_raw_frame(merged, handle.raw_path)
         manifest = {
             "symbol": resolved_symbol,
@@ -178,6 +220,7 @@ def ibkr_backfill(
             "use_rth": resolved_use_rth,
             "requested_range": {
                 "earliest_timestamp": earliest,
+                "requested_start_date": start_date,
                 "latest_timestamp": chunks[-1].end_utc if chunks else earliest,
             },
             "returned_range": {
@@ -192,16 +235,28 @@ def ibkr_backfill(
             "output_files": {
                 "raw_parquet": str(handle.raw_path),
                 "state_path": str(handle.state_path),
+                "chunk_dir": str(handle.chunk_dir),
             },
             "status": "completed",
             "collected_at": now,
         }
         write_json(handle.manifest_path, manifest)
-        state.update({"status": "completed", "row_count": int(len(merged)), "manifest_path": str(handle.manifest_path)})
+        state.update(
+            {
+                "status": "completed",
+                "row_count": int(len(merged)),
+                "manifest_path": str(handle.manifest_path),
+                "persisted_row_count": int(len(merged)),
+                "persisted_min_timestamp": None if merged.empty else str(merged["timestamp"].min()),
+                "persisted_max_timestamp": None if merged.empty else str(merged["timestamp"].max()),
+                "pending_chunk_count": 0,
+            }
+        )
         services.resume_store.save(handle, state)
         return state
     finally:
-        services.client.disconnect()
+        if opened_here:
+            services.client.disconnect()
 
 
 def ibkr_backfill_status(
@@ -219,12 +274,19 @@ def ibkr_backfill_status(
         bar_size=validate_bar_size(bar_size or config.default_bar_size),
     )
     state = resume_store.load(handle)
+    persisted_frame = _load_persisted_backfill_frame(handle)
+    ranges = _frame_ranges(persisted_frame)
     return {
         "status": "ok",
         "provider": "ibkr",
         "state_path": str(handle.state_path),
         "raw_output_path": str(handle.raw_path),
         "manifest_path": str(handle.manifest_path),
+        "chunk_dir": str(handle.chunk_dir),
+        "raw_exists": handle.raw_path.exists(),
+        "persisted_row_count": ranges["row_count"],
+        "persisted_min_timestamp": ranges["min_timestamp"],
+        "persisted_max_timestamp": ranges["max_timestamp"],
         "state": state,
     }
 
@@ -243,7 +305,7 @@ def export_training_csv_from_backfill(
     resolved_what = validate_what_to_show(what_to_show)
     resolved_bar = validate_bar_size(bar_size)
     handle = resume_store.resolve(symbol=resolved_symbol, what_to_show=resolved_what, bar_size=resolved_bar)
-    frame = _load_existing_raw_frame(handle.raw_path)
+    frame = _load_persisted_backfill_frame(handle)
     if frame.empty:
         raise ValueError(f"No backfilled data available for {resolved_symbol} {resolved_what} {resolved_bar}.")
     return export_ibkr_training_csv(
@@ -270,22 +332,40 @@ def prepare_ibkr_training_data(
     bar_size: str,
     use_rth: bool | None = None,
     output_path: str | Path | None = None,
+    start_date: str | None = None,
 ) -> dict[str, Any]:
     config = load_ibkr_historical_config(settings)
+    services = _build_services(settings, config)
     resolved_symbol = validate_symbol(symbol)
     resolved_what = validate_what_to_show(what_to_show)
     resolved_bar = validate_bar_size(bar_size)
+    resolved_use_rth = config.use_rth if use_rth is None else bool(use_rth)
     resolved_output = Path(output_path) if output_path else Path(config.export_root) / f"{resolved_symbol}_{resolved_bar.replace(' ', '_')}_{resolved_what}.csv"
-    head = ibkr_head_timestamp(settings, symbol=resolved_symbol, what_to_show=resolved_what, use_rth=use_rth)
-    backfill = ibkr_backfill(
-        settings,
-        symbol=resolved_symbol,
-        what_to_show=resolved_what,
-        bar_size=resolved_bar,
-        use_rth=use_rth,
-        resume=config.enable_resume,
-        earliest_timestamp=str(head["head_timestamp"]),
-    )
+    _ensure_historical_enabled(config)
+    try:
+        services.client.connect()
+        head = services.client.get_head_timestamp(
+            symbol=resolved_symbol,
+            exchange=settings.ib_exchange,
+            currency=settings.ib_currency,
+            what_to_show=resolved_what,
+            use_rth=resolved_use_rth,
+        )
+        head.update({"status": "ok", "provider": "ibkr"})
+        backfill = _ibkr_backfill_with_services(
+            settings,
+            config=config,
+            services=services,
+            symbol=resolved_symbol,
+            what_to_show=resolved_what,
+            bar_size=resolved_bar,
+            use_rth=resolved_use_rth,
+            resume=config.enable_resume,
+            earliest_timestamp=str(head["head_timestamp"]),
+            start_date=start_date,
+        )
+    finally:
+        services.client.disconnect()
     export_result = export_training_csv_from_backfill(
         settings,
         symbol=resolved_symbol,
@@ -341,6 +421,38 @@ def _load_existing_raw_frame(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
+def _existing_chunk_indices(handle) -> set[int]:
+    if not handle.chunk_dir.exists():
+        return set()
+    indices: set[int] = set()
+    for path in handle.chunk_dir.glob("chunk_*.parquet"):
+        try:
+            indices.add(int(path.stem.split("_", maxsplit=1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return indices
+
+
+def _chunk_path(handle, index: int) -> Path:
+    return handle.chunk_dir / f"chunk_{index:05d}.parquet"
+
+
+def _write_chunk_frame(frame: pd.DataFrame, handle, index: int) -> None:
+    target = _chunk_path(handle, index)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(target, index=False)
+
+
+def _load_persisted_backfill_frame(handle) -> pd.DataFrame:
+    chunk_frames: list[pd.DataFrame] = []
+    if handle.chunk_dir.exists():
+        for path in sorted(handle.chunk_dir.glob("chunk_*.parquet")):
+            chunk_frames.append(pd.read_parquet(path))
+    if handle.raw_path.exists():
+        chunk_frames.append(pd.read_parquet(handle.raw_path))
+    return _merge_frames(chunk_frames)
+
+
 def _write_raw_frame(frame: pd.DataFrame, path: Path) -> None:
     if frame.empty:
         raise ValueError("Backfill produced an empty dataset.")
@@ -357,6 +469,30 @@ def _merge_frames(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
     merged = merged.sort_values(["timestamp", "symbol"]).drop_duplicates(subset=["timestamp", "symbol"], keep="last")
     merged["timestamp"] = merged["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     return merged.reset_index(drop=True)
+
+
+def _frame_ranges(frame: pd.DataFrame) -> dict[str, Any]:
+    if frame.empty:
+        return {"row_count": 0, "min_timestamp": None, "max_timestamp": None}
+    return {
+        "row_count": int(len(frame)),
+        "min_timestamp": str(frame["timestamp"].min()),
+        "max_timestamp": str(frame["timestamp"].max()),
+    }
+
+
+def _update_ranges(ranges: dict[str, Any], frame: pd.DataFrame) -> dict[str, Any]:
+    if frame.empty:
+        return dict(ranges)
+    min_timestamp = str(frame["timestamp"].min())
+    max_timestamp = str(frame["timestamp"].max())
+    current_min = ranges.get("min_timestamp")
+    current_max = ranges.get("max_timestamp")
+    return {
+        "row_count": int(ranges.get("row_count", 0)) + int(len(frame)),
+        "min_timestamp": min_timestamp if current_min is None else min(current_min, min_timestamp),
+        "max_timestamp": max_timestamp if current_max is None else max(current_max, max_timestamp),
+    }
 
 
 def _build_services(settings: Settings, config: IBKRHistoricalConfig) -> HistoricalBackfillServices:
@@ -388,3 +524,10 @@ def _build_services(settings: Settings, config: IBKRHistoricalConfig) -> Histori
 def _ensure_historical_enabled(config: IBKRHistoricalConfig) -> None:
     if not config.enabled:
         raise ValueError("IBKR historical backfill is disabled by configuration.")
+
+
+def _client_is_connected(client: Any) -> bool:
+    checker = getattr(client, "is_connected", None)
+    if callable(checker):
+        return bool(checker())
+    return bool(getattr(client, "connected", False))

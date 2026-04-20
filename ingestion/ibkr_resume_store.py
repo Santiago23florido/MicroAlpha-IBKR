@@ -11,6 +11,7 @@ class ResumeHandle:
     state_path: Path
     raw_path: Path
     manifest_path: Path
+    chunk_dir: Path
 
 
 class IBKRBackfillResumeStore:
@@ -23,7 +24,8 @@ class IBKRBackfillResumeStore:
         state_path = self.state_root / f"{slug}.state.json"
         raw_path = self.output_root / symbol.upper() / what_to_show.upper() / bar_size.replace(" ", "_") / "bars.parquet"
         manifest_path = raw_path.with_name("manifest.json")
-        return ResumeHandle(state_path=state_path, raw_path=raw_path, manifest_path=manifest_path)
+        chunk_dir = raw_path.parent / "chunks"
+        return ResumeHandle(state_path=state_path, raw_path=raw_path, manifest_path=manifest_path, chunk_dir=chunk_dir)
 
     def load(self, handle: ResumeHandle) -> dict[str, Any]:
         if not handle.state_path.exists():

@@ -181,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
     backfill_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
     backfill_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
     backfill_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+    backfill_parser.add_argument("--start-date", help="Optional lower bound in YYYY-MM-DD. Example: 2025-01-01")
 
     backfill_resume_parser = subparsers.add_parser(
         "ibkr-backfill-resume",
@@ -190,6 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     backfill_resume_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
     backfill_resume_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
     backfill_resume_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+    backfill_resume_parser.add_argument("--start-date", help="Optional lower bound in YYYY-MM-DD. Example: 2025-01-01")
 
     backfill_status_parser = subparsers.add_parser(
         "ibkr-backfill-status",
@@ -216,6 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_ibkr_training_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
     prepare_ibkr_training_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
     prepare_ibkr_training_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+    prepare_ibkr_training_parser.add_argument("--start-date", help="Optional lower bound in YYYY-MM-DD. Example: 2025-01-01")
     prepare_ibkr_training_parser.add_argument("--output-path", required=True, help="Training CSV output path.")
 
     train_baseline_parser = subparsers.add_parser(
@@ -796,6 +799,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     bar_size=args.bar_size,
                     use_rth=_parse_cli_bool(args.use_rth),
                     resume=False,
+                    start_date=args.start_date,
                 )
             )
             return 0
@@ -809,6 +813,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     bar_size=args.bar_size,
                     use_rth=_parse_cli_bool(args.use_rth),
                     resume=True,
+                    start_date=args.start_date,
                 )
             )
             return 0
@@ -845,6 +850,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     bar_size=args.bar_size,
                     use_rth=_parse_cli_bool(args.use_rth),
                     output_path=args.output_path,
+                    start_date=args.start_date,
                 )
             )
             return 0

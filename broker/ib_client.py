@@ -916,7 +916,7 @@ class IBClient:
         self._app.request_errors.pop(req_id, None)
         contract = self._build_contract(symbol, exchange=exchange, currency=currency)
         self.logger.info("Requesting head timestamp for %s %s.", symbol.upper(), what_to_show)
-        self._app.reqHeadTimestamp(req_id, contract, what_to_show, 1 if use_rth else 0, 1)
+        self._app.reqHeadTimeStamp(req_id, contract, what_to_show, 1 if use_rth else 0, 1)
         self._wait_for_event(event, f"head timestamp for {symbol.upper()}", req_id=req_id)
         raw_value = self._app.head_timestamps.get(req_id)
         errors = self._app.request_errors.get(req_id, [])

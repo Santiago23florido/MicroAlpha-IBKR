@@ -614,14 +614,19 @@ python app.py evaluate-baseline
 ### Bootstrap Historical Training Data via IBKR Backfill
 
 ```bash
-python app.py ibkr-head-timestamp --symbol SPY --what-to-show TRADES
-python app.py ibkr-backfill --symbol SPY --what-to-show TRADES --bar-size "1 min" --use-rth true
-python app.py ibkr-backfill-resume --symbol SPY --what-to-show TRADES --bar-size "1 min"
-python app.py export-training-csv --symbol SPY --what-to-show TRADES --bar-size "1 min" --output-path data/training/ibkr/SPY_1m_training.csv
-python app.py prepare-ibkr-training-data --symbol SPY --what-to-show TRADES --bar-size "1 min" --use-rth true --output-path data/training/ibkr/SPY_1m_training.csv
+python app.py ibkr-head-timestamp --symbol SPY --what-to-show MIDPOINT
+python app.py ibkr-backfill --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
+python app.py ibkr-backfill-resume --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
+python app.py export-training-csv --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --output-path data/training/ibkr/SPY_1m_training.csv
+python app.py prepare-ibkr-training-data --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01 --output-path data/training/ibkr/SPY_1m_training.csv
 python app.py train --model-type baseline --data-path data/training/ibkr/SPY_1m_training.csv
 python app.py train --model-type deep --data-path data/training/ibkr/SPY_1m_training.csv
 ```
+
+Notes:
+
+- `MIDPOINT` is the safest default if `TRADES` returns sparse or empty HMDS responses for your subscription/profile.
+- `train --model-type deep` now prints progress by epoch and batch, and uses CUDA automatically when `torch.cuda.is_available()` is true.
 
 ### Comparison and Main Phase 5 Runner
 
@@ -1350,25 +1355,25 @@ By default:
 Discover earliest history:
 
 ```bash
-python app.py ibkr-head-timestamp --symbol SPY --what-to-show TRADES
+python app.py ibkr-head-timestamp --symbol SPY --what-to-show MIDPOINT
 ```
 
 Run backfill:
 
 ```bash
-python app.py ibkr-backfill --symbol SPY --what-to-show TRADES --bar-size "1 min" --use-rth true
+python app.py ibkr-backfill --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
 ```
 
 Resume:
 
 ```bash
-python app.py ibkr-backfill-resume --symbol SPY --what-to-show TRADES --bar-size "1 min"
+python app.py ibkr-backfill-resume --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
 ```
 
 Status:
 
 ```bash
-python app.py ibkr-backfill-status --symbol SPY
+python app.py ibkr-backfill-status --symbol SPY --what-to-show MIDPOINT --bar-size "1 min"
 ```
 
 Export training CSV:
@@ -1377,7 +1382,7 @@ Export training CSV:
 python app.py export-training-csv \
   --symbol SPY \
   --bar-size "1 min" \
-  --what-to-show TRADES \
+  --what-to-show MIDPOINT \
   --output-path data/training/ibkr/SPY_1m_training.csv
 ```
 
@@ -1386,9 +1391,10 @@ Main convenience command:
 ```bash
 python app.py prepare-ibkr-training-data \
   --symbol SPY \
-  --what-to-show TRADES \
+  --what-to-show MIDPOINT \
   --bar-size "1 min" \
   --use-rth true \
+  --start-date 2025-01-01 \
   --output-path data/training/ibkr/SPY_1m_training.csv
 ```
 
@@ -1397,9 +1403,10 @@ python app.py prepare-ibkr-training-data \
 ```bash
 python app.py prepare-ibkr-training-data \
   --symbol SPY \
-  --what-to-show TRADES \
+  --what-to-show MIDPOINT \
   --bar-size "1 min" \
   --use-rth true \
+  --start-date 2025-01-01 \
   --output-path data/training/ibkr/SPY_1m_training.csv
 
 python app.py train --model-type baseline --data-path data/training/ibkr/SPY_1m_training.csv
@@ -1410,6 +1417,12 @@ Optional deep model:
 ```bash
 python app.py train --model-type deep --data-path data/training/ibkr/SPY_1m_training.csv
 ```
+
+The deep trainer now:
+
+- prints epoch progress and batch checkpoints to the terminal
+- prints loss during training plus epoch-level metrics
+- uses GPU automatically when CUDA is available in the active virtual environment
 
 ## Next Phase
 
