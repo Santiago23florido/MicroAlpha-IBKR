@@ -1,0 +1,62 @@
+defaults:
+  deployment_paths:
+    runtime_root: data/runtime
+    runtime_state_path: data/runtime/services/runtime_state.json
+    runtime_log_dir: data/runtime/logs
+    runtime_service_log_path: data/runtime/logs/runtime_service_events.jsonl
+    deployment_snapshot_dir: data/runtime/deployments
+    deployment_registry_path: data/runtime/deployments/deployment_registry.jsonl
+    runtime_status_path: data/runtime/runtime_status.json
+    shadow_dir: data/reports/shadow
+    shadow_intents_path: data/reports/shadow/shadow_intents.jsonl
+    shadow_report_dir: data/reports/shadow/reports
+    release_registry_path: data/models/releases/release_registry.json
+    active_release_path: data/models/releases/active_release.json
+    release_history_path: data/models/releases/release_history.csv
+    promotion_audit_path: data/models/releases/promotion_audit.csv
+    rollback_audit_path: data/models/releases/rollback_audit.csv
+    governance_report_path: data/models/releases/release_governance_report.json
+    governance_status_path: data/runtime/governance_status.json
+  service_paths:
+    collector_name: collector
+    runtime_runner_name: runtime_session_runner
+    monitor_name: paper_monitor
+    reconciliation_name: reconciliation
+    reporting_name: reporting
+    scheduler_name: scheduler
+  governance_thresholds:
+    max_open_critical_incidents: 0
+    max_open_critical_alerts: 2
+    max_recent_session_failure_rate: 0.2
+    min_readiness_status: REVIEW_NEEDED
+    require_release_validation_summary: true
+    require_release_metrics_summary: true
+    require_release_readiness_summary: false
+  promotion_checks:
+    required_fields:
+      - model_name
+      - run_id
+      - artifact_dir
+      - feature_set_name
+      - target_mode
+    block_on_critical_incidents: true
+    require_paper_readiness: false
+    require_validation_summary: true
+    require_metrics_summary: true
+    allow_review_needed: false
+  rollback_policy:
+    require_reason: true
+    keep_failed_target_active: true
+    allow_only_known_releases: true
+  runtime_safety_flags:
+    disable_live_trading: true
+    require_paper_broker_mode: true
+    forbid_live_backend_names:
+      - ibkr_live
+      - live
+      - real_money
+    require_active_release: true
+    allow_shadow_without_broker: true
+environments:
+  development: {}
+  deploy: {}

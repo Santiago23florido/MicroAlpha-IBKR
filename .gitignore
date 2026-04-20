@@ -21,6 +21,8 @@ data/processed/*
 !data/processed/runtime/
 data/processed/runtime/*
 !data/processed/runtime/.gitkeep
+data/runtime/*
+!data/runtime/.gitkeep
 data/features/*
 !data/features/.gitkeep
 data/meta/*
