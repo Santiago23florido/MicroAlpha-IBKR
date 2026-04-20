@@ -4,6 +4,7 @@ from execution.backend import BaseExecutionBackend, BackendSubmissionResult, bui
 from execution.ibkr_paper_backend import IBKRPaperExecutionBackend
 from execution.journal import ExecutionJournal
 from execution.ibkr_state_mapper import map_ibkr_status
+from execution.reconciliation import reconcile_broker_state
 from execution.models import (
     ExecutionReport,
     FillApplicationResult,
@@ -49,4 +50,5 @@ __all__ = [
     "PositionState",
     "build_execution_backend",
     "map_ibkr_status",
+    "reconcile_broker_state",
 ]
