@@ -1,0 +1,28 @@
+defaults:
+  ibkr_historical:
+    enabled: true
+    default_symbol: SPY
+    default_what_to_show: TRADES
+    default_bar_size: 1 min
+    use_rth: true
+    max_concurrent_requests: 1
+    max_requests_per_10_min: 60
+    max_same_contract_requests_per_2_sec: 5
+    dedupe_window_seconds: 15
+    retry_limit: 4
+    backoff_seconds: 15.0
+    chunk_days_1m: 7
+    chunk_days_intraday_fallback: 5
+    output_root: data/raw/ibkr_backfill
+    state_root: data/processed/ibkr_backfill_state
+    export_root: data/training/ibkr
+    write_parquet: true
+    write_manifest: true
+    enable_ticks: false
+    enable_resume: true
+    default_tick_count: 1000
+    synthetic_spread_bps: 2.0
+    default_depth_size: 100
+environments:
+  development: {}
+  deploy: {}

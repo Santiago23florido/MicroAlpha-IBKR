@@ -42,6 +42,13 @@ from features.feature_pipeline import (
 )
 from features.validation import validate_feature_store
 from ingestion.collector import collect_market_data
+from ingestion.ibkr_historical_backfill import (
+    export_training_csv_from_backfill,
+    ibkr_backfill,
+    ibkr_backfill_status,
+    ibkr_head_timestamp,
+    prepare_ibkr_training_data,
+)
 from ingestion.ibkr_client import build_collector_ib_client
 from labels.labeling import build_labels
 from models.experiments import (
@@ -157,6 +164,62 @@ def build_parser() -> argparse.ArgumentParser:
     build_labels_parser.add_argument("--end-date", help="Filter features until this session date (YYYY-MM-DD).")
     build_labels_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     build_labels_parser.add_argument("--output-root", help="Override the label parquet output root.")
+
+    head_timestamp_parser = subparsers.add_parser(
+        "ibkr-head-timestamp",
+        help="Query IBKR reqHeadTimestamp to discover the earliest available historical timestamp for a symbol and whatToShow.",
+    )
+    head_timestamp_parser.add_argument("--symbol", required=True, help="Ticker symbol to inspect.")
+    head_timestamp_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    head_timestamp_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+
+    backfill_parser = subparsers.add_parser(
+        "ibkr-backfill",
+        help="Run IBKR historical bar backfill with pacing guards, chunk planning, checkpointing, and deduplicated parquet output.",
+    )
+    backfill_parser.add_argument("--symbol", required=True, help="Ticker symbol to backfill.")
+    backfill_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    backfill_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    backfill_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+    backfill_parser.add_argument("--start-date", help="Optional lower bound in YYYY-MM-DD. Example: 2025-01-01")
+
+    backfill_resume_parser = subparsers.add_parser(
+        "ibkr-backfill-resume",
+        help="Resume an interrupted IBKR historical bar backfill from the saved checkpoint state.",
+    )
+    backfill_resume_parser.add_argument("--symbol", required=True, help="Ticker symbol to backfill.")
+    backfill_resume_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    backfill_resume_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    backfill_resume_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+    backfill_resume_parser.add_argument("--start-date", help="Optional lower bound in YYYY-MM-DD. Example: 2025-01-01")
+
+    backfill_status_parser = subparsers.add_parser(
+        "ibkr-backfill-status",
+        help="Show current IBKR historical backfill state, manifest paths, and checkpoint progress for a symbol.",
+    )
+    backfill_status_parser.add_argument("--symbol", required=True, help="Ticker symbol to inspect.")
+    backfill_status_parser.add_argument("--what-to-show", help="Optional IBKR whatToShow filter.")
+    backfill_status_parser.add_argument("--bar-size", help='Optional bar size such as "1 min".')
+
+    export_training_parser = subparsers.add_parser(
+        "export-training-csv",
+        help="Export a training-ready CSV from an IBKR historical backfill dataset.",
+    )
+    export_training_parser.add_argument("--symbol", required=True, help="Ticker symbol to export.")
+    export_training_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    export_training_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    export_training_parser.add_argument("--output-path", required=True, help="Training CSV output path.")
+
+    prepare_ibkr_training_parser = subparsers.add_parser(
+        "prepare-ibkr-training-data",
+        help="Main bootstrap command: discover head timestamp, backfill IBKR historical bars, and export a training-ready CSV.",
+    )
+    prepare_ibkr_training_parser.add_argument("--symbol", required=True, help="Ticker symbol to prepare.")
+    prepare_ibkr_training_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    prepare_ibkr_training_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    prepare_ibkr_training_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+    prepare_ibkr_training_parser.add_argument("--start-date", help="Optional lower bound in YYYY-MM-DD. Example: 2025-01-01")
+    prepare_ibkr_training_parser.add_argument("--output-path", required=True, help="Training CSV output path.")
 
     train_baseline_parser = subparsers.add_parser(
         "train-baseline",
@@ -716,6 +779,82 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "ibkr-head-timestamp":
+            print_result(
+                ibkr_head_timestamp(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    use_rth=_parse_cli_bool(args.use_rth),
+                )
+            )
+            return 0
+
+        if args.command == "ibkr-backfill":
+            print_result(
+                ibkr_backfill(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                    use_rth=_parse_cli_bool(args.use_rth),
+                    resume=False,
+                    start_date=args.start_date,
+                )
+            )
+            return 0
+
+        if args.command == "ibkr-backfill-resume":
+            print_result(
+                ibkr_backfill(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                    use_rth=_parse_cli_bool(args.use_rth),
+                    resume=True,
+                    start_date=args.start_date,
+                )
+            )
+            return 0
+
+        if args.command == "ibkr-backfill-status":
+            print_result(
+                ibkr_backfill_status(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                )
+            )
+            return 0
+
+        if args.command == "export-training-csv":
+            print_result(
+                export_training_csv_from_backfill(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                    output_path=args.output_path,
+                )
+            )
+            return 0
+
+        if args.command == "prepare-ibkr-training-data":
+            print_result(
+                prepare_ibkr_training_data(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                    use_rth=_parse_cli_bool(args.use_rth),
+                    output_path=args.output_path,
+                    start_date=args.start_date,
+                )
+            )
+            return 0
+
         if args.command == "train-baseline":
             print_result(
                 train_baseline_variant(
@@ -1245,6 +1384,17 @@ def handle_train(runtime: RuntimeServices, args: argparse.Namespace) -> int:
         )
     print_result(payload)
     return 0
+
+
+def _parse_cli_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"Invalid boolean CLI value: {value!r}")
 
 
 def run_dev_sync_and_build(
