@@ -7,7 +7,7 @@ This repository now supports the combined Phase 12, Phase 13, and Phase 14 layer
 - `PC2`: collector and operational raw data source
 - `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-The system keeps the same normalized operational chain and now adds deployment/runtime profiles, stable PC2 bootstrap, shadow mode, release governance, promotion/rollback, runtime control, and a Polygon Basic bootstrap training-data path without enabling any live-trading path:
+The system keeps the same normalized operational chain and now adds deployment/runtime profiles, stable PC2 bootstrap, shadow mode, release governance, promotion/rollback, runtime control, and an IBKR-only historical backfill path for training bootstrap without enabling any live-trading path:
 
 - feature stores
 - one explicitly selected active model from Phase 5
@@ -34,7 +34,7 @@ The system keeps the same normalized operational chain and now adds deployment/r
 - local runtime bootstrap and service-style `start/stop/restart/status`
 - shadow order intents plus shadow-vs-paper and shadow-vs-market reports
 - release registry, active release tracking, promotion, rollback, and governance audit trails
-- a second historical training-data source based on Polygon Basic for fast bootstrap model training
+- an IBKR-only historical backfill path for bootstrap model training
 - economic performance evaluation
 - signal quality analysis by score, probability, and buckets
 - drift detection for data, prediction outputs, and labels
@@ -101,11 +101,14 @@ MicroAlpha-IBKR/
 │   └── deployment.yaml
 ├── deployment/
 │   └── lan_sync.py
-├── data_sources/
-│   ├── polygon_client.py
-│   ├── polygon_download.py
-│   ├── polygon_normalizer.py
-│   └── training_dataset_export.py
+├── ingestion/
+│   ├── ibkr_historical_backfill.py
+│   ├── ibkr_history_planner.py
+│   ├── ibkr_rate_limiter.py
+│   └── ibkr_resume_store.py
+├── data/
+│   ├── historical_export.py
+│   └── historical_loader.py
 ├── engine/
 │   ├── phase6.py
 │   └── phase7.py
@@ -608,14 +611,16 @@ python app.py train-baseline --feature-set hybrid_intraday --target-mode classif
 python app.py evaluate-baseline
 ```
 
-### Bootstrap Historical Training Data via Polygon Basic
+### Bootstrap Historical Training Data via IBKR Backfill
 
 ```bash
-python app.py fetch-training-data --provider polygon --symbol SPY --start-date 2025-01-01 --end-date 2025-03-31 --interval 1m --output-path data/training/polygon/SPY_1m_training.csv
-python app.py normalize-training-data --provider polygon --input-path path/to/raw_polygon.csv --output-path data/training/polygon/SPY_manual_training.csv
-python app.py prepare-training-data --provider polygon --symbol SPY --start-date 2025-01-01 --end-date 2025-03-31 --interval 1m --output-path data/training/polygon/SPY_1m_training.csv
-python app.py train --model-type baseline --data-path data/training/polygon/SPY_1m_training.csv
-python app.py train --model-type deep --data-path data/training/polygon/SPY_1m_training.csv
+python app.py ibkr-head-timestamp --symbol SPY --what-to-show TRADES
+python app.py ibkr-backfill --symbol SPY --what-to-show TRADES --bar-size "1 min" --use-rth true
+python app.py ibkr-backfill-resume --symbol SPY --what-to-show TRADES --bar-size "1 min"
+python app.py export-training-csv --symbol SPY --what-to-show TRADES --bar-size "1 min" --output-path data/training/ibkr/SPY_1m_training.csv
+python app.py prepare-ibkr-training-data --symbol SPY --what-to-show TRADES --bar-size "1 min" --use-rth true --output-path data/training/ibkr/SPY_1m_training.csv
+python app.py train --model-type baseline --data-path data/training/ibkr/SPY_1m_training.csv
+python app.py train --model-type deep --data-path data/training/ibkr/SPY_1m_training.csv
 ```
 
 ### Comparison and Main Phase 5 Runner
@@ -1238,42 +1243,64 @@ If readiness is `NOT_READY`, do not continue automated paper validation until th
 - Runtime management is local state management, not a full process supervisor.
 - Shadow-mode comparisons are only as good as the paper and realized-market data available for the same timestamps.
 - Governance checks are conservative but they do not replace manual operational review before a promotion.
-- Polygon Basic bootstrap data is OHLCV-oriented. Synthetic `bid`, `ask`, `bid_size`, and `ask_size` are generated when the source does not provide them, and `last` defaults to `close`.
-- Polygon bootstrap datasets are intended to unblock early training, not to replace the IBKR operational data path for execution or final operational validation.
+- The historical training bootstrap path is now IBKR-only. It depends on IBKR market data permissions and on IBKR pacing limits.
+- The training export enriches historical bars with synthetic `bid`, `ask`, `bid_size`, and `ask_size` so the current training loaders can work directly on the exported CSV.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
 
-## Polygon Basic Bootstrap Training Data
+## IBKR Historical Backfill for Training
 
-Polygon Basic is integrated as a second historical data source so you can start training immediately even if the current IBKR example CSV is not useful yet.
+The training bootstrap flow now supports IBKR only.
 
-- IBKR remains the operational route for collection, paper execution, reconciliation, and validation.
-- Polygon Basic is a bootstrap route for historical training data.
-- The integration does not change the execution stack and does not replace IBKR.
+- Polygon has been removed from the active training-data path.
+- IBKR remains the operational route for collection, paper execution, reconciliation, validation, and now historical bootstrap training data.
+- The backfill path is designed around `reqHeadTimestamp` and `reqHistoricalData`, with `reqHistoricalTicks` kept as a secondary research primitive inside the broker client.
 
 ### Why This Exists
 
-- It gives you a fast, free path to a first trainable dataset.
-- It lets you bootstrap Phase 5 style experimentation before the operational IBKR data store is mature.
-- It keeps the provider-specific logic isolated under `data_sources/`.
+- It keeps the project coherent around one broker/data source.
+- It avoids provider drift between training data and operational execution data.
+- It discovers the earliest historical point IBKR will return before requesting chunks.
+- It supports pacing-aware backfill, checkpointing, resume, and training-ready export.
 
-### Supported Modes
+### Historical Backfill Strategy
 
-1. API mode:
-- Reads `POLYGON_API_KEY` from `.env`
-- Downloads historical aggregates from Polygon Basic
-- Normalizes them into the canonical training schema
-- Writes CSV, optional Parquet, and optional manifest JSON
+1. `ibkr-head-timestamp`
+- calls `reqHeadTimestamp`
+- discovers the earliest available historical timestamp for `symbol + whatToShow`
 
-2. Manual CSV mode:
-- Reads a CSV or Parquet downloaded manually from Polygon
-- Detects Polygon-style columns such as `t/o/h/l/c/v`
-- Normalizes into the same canonical schema
-- Writes the same output artifacts as API mode
+2. `ibkr-backfill`
+- plans chunks backwards from now to the earliest available point
+- requests historical bars in bounded chunks, optimized for `1 min`
+- deduplicates and appends safely into a canonical parquet dataset
 
-### Canonical Output Schema
+3. `ibkr-backfill-resume`
+- reloads checkpoint state
+- skips completed chunks
+- continues without repeating finished work
 
-Every exported bootstrap dataset is normalized to a stable schema:
+4. `export-training-csv`
+- reads the canonical backfill parquet
+- maps `close -> last`
+- adds synthetic `bid`, `ask`, `bid_size`, `ask_size`
+- writes CSV and optional Parquet/manifest for immediate training
+
+5. `prepare-ibkr-training-data`
+- combines head timestamp discovery, backfill, resume-aware progress, and training export
+
+### Pacing and Safety
+
+The backfill layer includes a local pacing guard that:
+
+- avoids repeating an identical request within 15 seconds
+- avoids 6 or more same-key requests inside 2 seconds
+- respects the 60 requests / 10 minutes ceiling
+- counts `BID_ASK` as double cost
+- uses conservative retry with backoff on IBKR historical errors
+
+### Canonical Historical Bar Output
+
+The backfill parquet is normalized to:
 
 - `timestamp`
 - `symbol`
@@ -1283,103 +1310,106 @@ Every exported bootstrap dataset is normalized to a stable schema:
 - `close`
 - `last`
 - `volume`
+- `count`
+- `wap`
+- `source`
+- `provider`
+- `bar_size`
+- `what_to_show`
+- `collected_at`
+
+Rules:
+
+- `last = close` if no better field exists
+- `provider = ibkr`
+- `source = ibkr_historical_backfill`
+- timestamps are written in UTC
+
+### Training Export
+
+The training CSV export keeps the historical bar fields and adds:
+
 - `bid`
 - `ask`
 - `bid_size`
 - `ask_size`
-- `source`
-- `provider`
-- `interval`
-- `event_type`
-- `collected_at`
-- `bootstrap_source`
-- `market_data_mode`
-- `synthetic_bid_ask_flag`
-- `synthetic_depth_flag`
 
-### Real vs Synthetic Fields
+These four are synthetic and exist only to make the current training loader immediately usable on historical bars.
 
-When Polygon only provides OHLCV:
+### Output Layout
 
-- real fields usually are `timestamp`, `open`, `high`, `low`, `close`, and `volume`
-- `last` defaults to `close` if missing
-- `bid` and `ask` are synthetic using:
-  `bid = close * (1 - spread_bps / 20000)`
-  `ask = close * (1 + spread_bps / 20000)`
-- `bid_size` and `ask_size` default to `POLYGON_DEFAULT_DEPTH_SIZE`
+By default:
 
-These synthetic fields are never hidden:
-
-- `synthetic_bid_ask_flag`
-- `synthetic_depth_flag`
-- manifest metadata with `real_columns` and `synthetic_columns`
-
-### Output Files
-
-By default the integration writes under `data/training/polygon/`:
-
-- canonical CSV at the `--output-path`
-- optional Parquet with the same basename
-- optional manifest JSON with dataset metadata and field provenance
+- raw deduplicated parquet: `data/raw/ibkr_backfill/<SYMBOL>/<WHAT_TO_SHOW>/<BAR_SIZE>/bars.parquet`
+- checkpoint state: `data/processed/ibkr_backfill_state/*.state.json`
+- manifest: next to the raw parquet
+- training export: `data/training/ibkr/`
 
 ### Commands
 
-API mode:
+Discover earliest history:
 
 ```bash
-python app.py fetch-training-data \
-  --provider polygon \
-  --symbol SPY \
-  --start-date 2025-01-01 \
-  --end-date 2025-03-31 \
-  --interval 1m \
-  --output-path data/training/polygon/SPY_1m_training.csv
+python app.py ibkr-head-timestamp --symbol SPY --what-to-show TRADES
 ```
 
-Manual CSV mode:
+Run backfill:
 
 ```bash
-python app.py normalize-training-data \
-  --provider polygon \
-  --input-path path/to/raw_polygon.csv \
-  --output-path data/training/polygon/SPY_manual_training.csv
+python app.py ibkr-backfill --symbol SPY --what-to-show TRADES --bar-size "1 min" --use-rth true
+```
+
+Resume:
+
+```bash
+python app.py ibkr-backfill-resume --symbol SPY --what-to-show TRADES --bar-size "1 min"
+```
+
+Status:
+
+```bash
+python app.py ibkr-backfill-status --symbol SPY
+```
+
+Export training CSV:
+
+```bash
+python app.py export-training-csv \
+  --symbol SPY \
+  --bar-size "1 min" \
+  --what-to-show TRADES \
+  --output-path data/training/ibkr/SPY_1m_training.csv
 ```
 
 Main convenience command:
 
 ```bash
-python app.py prepare-training-data \
-  --provider polygon \
+python app.py prepare-ibkr-training-data \
   --symbol SPY \
-  --start-date 2025-01-01 \
-  --end-date 2025-03-31 \
-  --interval 1m \
-  --output-path data/training/polygon/SPY_1m_training.csv
+  --what-to-show TRADES \
+  --bar-size "1 min" \
+  --use-rth true \
+  --output-path data/training/ibkr/SPY_1m_training.csv
 ```
 
 ### Training Immediately After Preparation
 
-Fastest path:
-
 ```bash
-python app.py prepare-training-data \
-  --provider polygon \
+python app.py prepare-ibkr-training-data \
   --symbol SPY \
-  --start-date 2025-01-01 \
-  --end-date 2025-03-31 \
-  --interval 1m \
-  --output-path data/training/polygon/SPY_1m_training.csv
+  --what-to-show TRADES \
+  --bar-size "1 min" \
+  --use-rth true \
+  --output-path data/training/ibkr/SPY_1m_training.csv
 
-python app.py train --model-type baseline --data-path data/training/polygon/SPY_1m_training.csv
+python app.py train --model-type baseline --data-path data/training/ibkr/SPY_1m_training.csv
 ```
 
 Optional deep model:
 
 ```bash
-python app.py train --model-type deep --data-path data/training/polygon/SPY_1m_training.csv
+python app.py train --model-type deep --data-path data/training/ibkr/SPY_1m_training.csv
 ```
-
-If you later want to route the data through the full Phase 5 flow, use the bootstrap dataset to seed a normalized research dataset, then continue with the usual feature, label, and experiment commands. The Polygon integration does not bypass or replace that flow; it just gets you to a first trainable file quickly.
 
 ## Next Phase
 

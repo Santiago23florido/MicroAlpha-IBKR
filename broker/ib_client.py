@@ -63,6 +63,36 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_ib_head_timestamp(value: str) -> str:
+    raw = str(value).strip()
+    for fmt in ("%Y%m%d-%H:%M:%S", "%Y%m%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            continue
+    raise IBClientError(f"Unable to parse IB head timestamp value: {value!r}")
+
+
+def _parse_ib_bar_timestamp(value: Any) -> str:
+    raw = str(value).strip()
+    if raw.isdigit():
+        try:
+            return datetime.fromtimestamp(int(raw), tz=timezone.utc).isoformat()
+        except (OverflowError, ValueError):
+            pass
+        if len(raw) == 8:
+            try:
+                return datetime.strptime(raw, "%Y%m%d").replace(tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                pass
+    for fmt in ("%Y%m%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            continue
+    raise IBClientError(f"Unable to parse IB historical bar timestamp value: {value!r}")
+
+
 class IBClientError(RuntimeError):
     pass
 
@@ -89,10 +119,14 @@ class _IBGatewayApp(EWrapper, EClient):
         self.request_notices: dict[int, list[str]] = defaultdict(list)
         self.snapshot_events: dict[int, threading.Event] = {}
         self.historical_data_events: dict[int, threading.Event] = {}
+        self.head_timestamp_events: dict[int, threading.Event] = {}
+        self.historical_ticks_events: dict[int, threading.Event] = {}
         self.order_events: dict[int, threading.Event] = {}
         self.order_terminal_events: dict[int, threading.Event] = {}
         self.snapshot_data: dict[int, dict[str, Any]] = {}
         self.historical_data_rows: dict[int, list[dict[str, Any]]] = {}
+        self.head_timestamps: dict[int, str] = {}
+        self.historical_tick_rows: dict[int, list[dict[str, Any]]] = {}
         self.order_statuses: dict[int, dict[str, Any]] = {}
         self.order_execution_details: dict[int, list[dict[str, Any]]] = defaultdict(list)
         self.execution_commission_reports: dict[str, dict[str, Any]] = {}
@@ -196,7 +230,7 @@ class _IBGatewayApp(EWrapper, EClient):
             rows = self.historical_data_rows.setdefault(reqId, [])
             rows.append(
                 {
-                    "timestamp": datetime.fromtimestamp(int(bar.date), tz=timezone.utc).isoformat(),
+                    "timestamp": _parse_ib_bar_timestamp(bar.date),
                     "open": bar.open,
                     "high": bar.high,
                     "low": bar.low,
@@ -209,6 +243,66 @@ class _IBGatewayApp(EWrapper, EClient):
 
     def historicalDataEnd(self, reqId: int, start: str, end: str) -> None:  # noqa: N802
         event = self.historical_data_events.get(reqId)
+        if event is not None:
+            event.set()
+
+    def headTimestamp(self, reqId: int, headTimestamp: str) -> None:  # noqa: N802
+        self.head_timestamps[reqId] = headTimestamp
+        event = self.head_timestamp_events.get(reqId)
+        if event is not None:
+            event.set()
+
+    def historicalTicks(self, reqId: int, ticks: list[Any], done: bool) -> None:  # noqa: N802
+        rows = self.historical_tick_rows.setdefault(reqId, [])
+        for tick in ticks:
+            rows.append(
+                {
+                    "timestamp": datetime.fromtimestamp(int(tick.time), tz=timezone.utc).isoformat(),
+                    "price": getattr(tick, "price", None),
+                    "size": getattr(tick, "size", None),
+                }
+            )
+        if done:
+            event = self.historical_ticks_events.get(reqId)
+            if event is not None:
+                event.set()
+
+    def historicalTicksBidAsk(self, reqId: int, ticks: list[Any], done: bool) -> None:  # noqa: N802
+        rows = self.historical_tick_rows.setdefault(reqId, [])
+        for tick in ticks:
+            rows.append(
+                {
+                    "timestamp": datetime.fromtimestamp(int(tick.time), tz=timezone.utc).isoformat(),
+                    "bid_price": getattr(tick, "priceBid", None),
+                    "ask_price": getattr(tick, "priceAsk", None),
+                    "bid_size": getattr(tick, "sizeBid", None),
+                    "ask_size": getattr(tick, "sizeAsk", None),
+                }
+            )
+        if done:
+            event = self.historical_ticks_events.get(reqId)
+            if event is not None:
+                event.set()
+
+    def historicalTicksLast(self, reqId: int, ticks: list[Any], done: bool) -> None:  # noqa: N802
+        rows = self.historical_tick_rows.setdefault(reqId, [])
+        for tick in ticks:
+            rows.append(
+                {
+                    "timestamp": datetime.fromtimestamp(int(tick.time), tz=timezone.utc).isoformat(),
+                    "price": getattr(tick, "price", None),
+                    "size": getattr(tick, "size", None),
+                    "exchange": getattr(tick, "exchange", None),
+                    "special_conditions": getattr(tick, "specialConditions", None),
+                }
+            )
+        if done:
+            event = self.historical_ticks_events.get(reqId)
+            if event is not None:
+                event.set()
+
+    def historicalTicksEnd(self, reqId: int, done: bool) -> None:  # noqa: N802
+        event = self.historical_ticks_events.get(reqId)
         if event is not None:
             event.set()
 
@@ -774,6 +868,7 @@ class IBClient:
         bar_size: str = "1 min",
         what_to_show: str = "TRADES",
         use_rth: bool = True,
+        end_datetime: str = "",
     ) -> list[dict[str, Any]]:
         self._ensure_connected()
         req_id = self._next_request_id()
@@ -786,7 +881,7 @@ class IBClient:
         self._app.reqHistoricalData(
             req_id,
             contract,
-            "",
+            end_datetime,
             duration,
             bar_size,
             what_to_show,
@@ -801,6 +896,82 @@ class IBClient:
         if errors and not rows:
             raise IBClientError(
                 f"Historical data request for {symbol.upper()} failed. " + " | ".join(errors)
+            )
+        return rows
+
+    def get_head_timestamp(
+        self,
+        *,
+        symbol: str,
+        exchange: str | None = None,
+        currency: str | None = None,
+        what_to_show: str = "TRADES",
+        use_rth: bool = True,
+    ) -> dict[str, Any]:
+        self._ensure_connected()
+        req_id = self._next_request_id()
+        event = threading.Event()
+        self._app.head_timestamp_events[req_id] = event
+        self._app.head_timestamps.pop(req_id, None)
+        self._app.request_errors.pop(req_id, None)
+        contract = self._build_contract(symbol, exchange=exchange, currency=currency)
+        self.logger.info("Requesting head timestamp for %s %s.", symbol.upper(), what_to_show)
+        self._app.reqHeadTimestamp(req_id, contract, what_to_show, 1 if use_rth else 0, 1)
+        self._wait_for_event(event, f"head timestamp for {symbol.upper()}", req_id=req_id)
+        raw_value = self._app.head_timestamps.get(req_id)
+        errors = self._app.request_errors.get(req_id, [])
+        if errors and raw_value is None:
+            raise IBClientError(
+                f"Head timestamp request for {symbol.upper()} failed. " + " | ".join(errors)
+            )
+        if raw_value is None:
+            raise IBClientError(f"Head timestamp request for {symbol.upper()} returned no value.")
+        parsed = _parse_ib_head_timestamp(raw_value)
+        return {
+            "symbol": symbol.upper(),
+            "what_to_show": what_to_show,
+            "use_rth": use_rth,
+            "head_timestamp": parsed,
+            "raw_head_timestamp": raw_value,
+        }
+
+    def get_historical_ticks(
+        self,
+        *,
+        symbol: str,
+        start_datetime: str,
+        end_datetime: str,
+        exchange: str | None = None,
+        currency: str | None = None,
+        what_to_show: str = "TRADES",
+        use_rth: bool = True,
+        number_of_ticks: int = 1000,
+    ) -> list[dict[str, Any]]:
+        self._ensure_connected()
+        req_id = self._next_request_id()
+        event = threading.Event()
+        self._app.historical_ticks_events[req_id] = event
+        self._app.historical_tick_rows[req_id] = []
+        self._app.request_errors.pop(req_id, None)
+        contract = self._build_contract(symbol, exchange=exchange, currency=currency)
+        self.logger.info("Requesting historical ticks for %s %s.", symbol.upper(), what_to_show)
+        self._app.reqHistoricalTicks(
+            req_id,
+            contract,
+            start_datetime,
+            end_datetime,
+            number_of_ticks,
+            what_to_show,
+            1 if use_rth else 0,
+            True,
+            [],
+        )
+        self._wait_for_event(event, f"historical ticks for {symbol.upper()}", req_id=req_id)
+        rows = list(self._app.historical_tick_rows.get(req_id, []))
+        errors = self._app.request_errors.get(req_id, [])
+        if errors and not rows:
+            raise IBClientError(
+                f"Historical ticks request for {symbol.upper()} failed. " + " | ".join(errors)
             )
         return rows
 

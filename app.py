@@ -17,7 +17,6 @@ from broker.ib_client import IBClientError
 from config import Settings, load_settings
 from config.phase6 import set_active_model_selection
 from config.phase10_11 import load_phase10_11_config
-from data_sources import fetch_training_data, normalize_training_data, prepare_training_data
 from governance.releases import (
     governance_status,
     list_model_releases,
@@ -43,6 +42,13 @@ from features.feature_pipeline import (
 )
 from features.validation import validate_feature_store
 from ingestion.collector import collect_market_data
+from ingestion.ibkr_historical_backfill import (
+    export_training_csv_from_backfill,
+    ibkr_backfill,
+    ibkr_backfill_status,
+    ibkr_head_timestamp,
+    prepare_ibkr_training_data,
+)
 from ingestion.ibkr_client import build_collector_ib_client
 from labels.labeling import build_labels
 from models.experiments import (
@@ -159,38 +165,58 @@ def build_parser() -> argparse.ArgumentParser:
     build_labels_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     build_labels_parser.add_argument("--output-root", help="Override the label parquet output root.")
 
-    fetch_training_parser = subparsers.add_parser(
-        "fetch-training-data",
-        help="Download bootstrap training data from a historical provider such as Polygon and export a canonical training dataset.",
+    head_timestamp_parser = subparsers.add_parser(
+        "ibkr-head-timestamp",
+        help="Query IBKR reqHeadTimestamp to discover the earliest available historical timestamp for a symbol and whatToShow.",
     )
-    fetch_training_parser.add_argument("--provider", required=True, help="Historical bootstrap provider. Currently supported: polygon.")
-    fetch_training_parser.add_argument("--symbol", required=True, help="Ticker symbol to download.")
-    fetch_training_parser.add_argument("--start-date", required=True, help="Inclusive start date in YYYY-MM-DD.")
-    fetch_training_parser.add_argument("--end-date", required=True, help="Inclusive end date in YYYY-MM-DD.")
-    fetch_training_parser.add_argument("--interval", required=True, help="Provider interval such as 1m.")
-    fetch_training_parser.add_argument("--output-path", required=True, help="Canonical CSV/Parquet output path.")
+    head_timestamp_parser.add_argument("--symbol", required=True, help="Ticker symbol to inspect.")
+    head_timestamp_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    head_timestamp_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
 
-    normalize_training_parser = subparsers.add_parser(
-        "normalize-training-data",
-        help="Normalize a manually downloaded historical dataset such as Polygon CSV into the canonical bootstrap-training schema.",
+    backfill_parser = subparsers.add_parser(
+        "ibkr-backfill",
+        help="Run IBKR historical bar backfill with pacing guards, chunk planning, checkpointing, and deduplicated parquet output.",
     )
-    normalize_training_parser.add_argument("--provider", required=True, help="Historical bootstrap provider. Currently supported: polygon.")
-    normalize_training_parser.add_argument("--input-path", required=True, help="Path to the raw provider CSV/Parquet file.")
-    normalize_training_parser.add_argument("--output-path", required=True, help="Canonical CSV/Parquet output path.")
-    normalize_training_parser.add_argument("--symbol", help="Optional symbol override.")
-    normalize_training_parser.add_argument("--interval", help="Optional interval metadata such as 1m.")
+    backfill_parser.add_argument("--symbol", required=True, help="Ticker symbol to backfill.")
+    backfill_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    backfill_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    backfill_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
 
-    prepare_training_parser = subparsers.add_parser(
-        "prepare-training-data",
-        help="Convenience command to fetch or normalize bootstrap historical data and export a training-ready dataset.",
+    backfill_resume_parser = subparsers.add_parser(
+        "ibkr-backfill-resume",
+        help="Resume an interrupted IBKR historical bar backfill from the saved checkpoint state.",
     )
-    prepare_training_parser.add_argument("--provider", required=True, help="Historical bootstrap provider. Currently supported: polygon.")
-    prepare_training_parser.add_argument("--symbol", help="Ticker symbol. Required for API mode.")
-    prepare_training_parser.add_argument("--start-date", help="Inclusive start date in YYYY-MM-DD for API mode.")
-    prepare_training_parser.add_argument("--end-date", help="Inclusive end date in YYYY-MM-DD for API mode.")
-    prepare_training_parser.add_argument("--interval", help="Provider interval such as 1m.")
-    prepare_training_parser.add_argument("--output-path", help="Canonical CSV/Parquet output path.")
-    prepare_training_parser.add_argument("--input-path", help="If supplied, use manual CSV/Parquet normalization mode.")
+    backfill_resume_parser.add_argument("--symbol", required=True, help="Ticker symbol to backfill.")
+    backfill_resume_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    backfill_resume_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    backfill_resume_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+
+    backfill_status_parser = subparsers.add_parser(
+        "ibkr-backfill-status",
+        help="Show current IBKR historical backfill state, manifest paths, and checkpoint progress for a symbol.",
+    )
+    backfill_status_parser.add_argument("--symbol", required=True, help="Ticker symbol to inspect.")
+    backfill_status_parser.add_argument("--what-to-show", help="Optional IBKR whatToShow filter.")
+    backfill_status_parser.add_argument("--bar-size", help='Optional bar size such as "1 min".')
+
+    export_training_parser = subparsers.add_parser(
+        "export-training-csv",
+        help="Export a training-ready CSV from an IBKR historical backfill dataset.",
+    )
+    export_training_parser.add_argument("--symbol", required=True, help="Ticker symbol to export.")
+    export_training_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    export_training_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    export_training_parser.add_argument("--output-path", required=True, help="Training CSV output path.")
+
+    prepare_ibkr_training_parser = subparsers.add_parser(
+        "prepare-ibkr-training-data",
+        help="Main bootstrap command: discover head timestamp, backfill IBKR historical bars, and export a training-ready CSV.",
+    )
+    prepare_ibkr_training_parser.add_argument("--symbol", required=True, help="Ticker symbol to prepare.")
+    prepare_ibkr_training_parser.add_argument("--what-to-show", default="TRADES", help="IBKR whatToShow value such as TRADES.")
+    prepare_ibkr_training_parser.add_argument("--bar-size", default="1 min", help='IBKR bar size such as "1 min".')
+    prepare_ibkr_training_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
+    prepare_ibkr_training_parser.add_argument("--output-path", required=True, help="Training CSV output path.")
 
     train_baseline_parser = subparsers.add_parser(
         "train-baseline",
@@ -750,44 +776,75 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
-        if args.command == "fetch-training-data":
+        if args.command == "ibkr-head-timestamp":
             print_result(
-                fetch_training_data(
+                ibkr_head_timestamp(
                     settings,
-                    provider=args.provider,
                     symbol=args.symbol,
-                    start_date=args.start_date,
-                    end_date=args.end_date,
-                    interval=args.interval,
+                    what_to_show=args.what_to_show,
+                    use_rth=_parse_cli_bool(args.use_rth),
+                )
+            )
+            return 0
+
+        if args.command == "ibkr-backfill":
+            print_result(
+                ibkr_backfill(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                    use_rth=_parse_cli_bool(args.use_rth),
+                    resume=False,
+                )
+            )
+            return 0
+
+        if args.command == "ibkr-backfill-resume":
+            print_result(
+                ibkr_backfill(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                    use_rth=_parse_cli_bool(args.use_rth),
+                    resume=True,
+                )
+            )
+            return 0
+
+        if args.command == "ibkr-backfill-status":
+            print_result(
+                ibkr_backfill_status(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                )
+            )
+            return 0
+
+        if args.command == "export-training-csv":
+            print_result(
+                export_training_csv_from_backfill(
+                    settings,
+                    symbol=args.symbol,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
                     output_path=args.output_path,
                 )
             )
             return 0
 
-        if args.command == "normalize-training-data":
+        if args.command == "prepare-ibkr-training-data":
             print_result(
-                normalize_training_data(
+                prepare_ibkr_training_data(
                     settings,
-                    provider=args.provider,
-                    input_path=args.input_path,
-                    output_path=args.output_path,
                     symbol=args.symbol,
-                    interval=args.interval,
-                )
-            )
-            return 0
-
-        if args.command == "prepare-training-data":
-            print_result(
-                prepare_training_data(
-                    settings,
-                    provider=args.provider,
-                    symbol=args.symbol,
-                    start_date=args.start_date,
-                    end_date=args.end_date,
-                    interval=args.interval,
+                    what_to_show=args.what_to_show,
+                    bar_size=args.bar_size,
+                    use_rth=_parse_cli_bool(args.use_rth),
                     output_path=args.output_path,
-                    input_path=args.input_path,
                 )
             )
             return 0
@@ -1321,6 +1378,17 @@ def handle_train(runtime: RuntimeServices, args: argparse.Namespace) -> int:
         )
     print_result(payload)
     return 0
+
+
+def _parse_cli_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"Invalid boolean CLI value: {value!r}")
 
 
 def run_dev_sync_and_build(
