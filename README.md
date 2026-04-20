@@ -1,13 +1,13 @@
-# MicroAlpha-IBKR Phase 10 and 11: Paper Validation, Reconciliation, Monitoring, Hardening, and Safe Ops Automation on Top of the LAN Modeling Pipeline
+# MicroAlpha-IBKR Phase 12 to 14: Deployment, Shadow Mode, Model Lifecycle, Governance, and Safe Paper Operations on Top of the LAN Modeling Pipeline
 
 ## Purpose
 
-This repository now supports the combined Phase 10 and Phase 11 layer on top of the Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 workflow while keeping the dual-machine architecture intact:
+This repository now supports the combined Phase 12, Phase 13, and Phase 14 layer on top of the Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, and Phase 10/11 workflow while keeping the dual-machine architecture intact:
 
 - `PC2`: collector and operational raw data source
 - `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-The system keeps the same normalized operational chain and now adds prolonged paper validation, broker reconciliation, continuous monitoring, alerts, readiness review, conservative recovery logic, runbooks, and controlled local orchestration without enabling any live-trading path:
+The system keeps the same normalized operational chain and now adds deployment/runtime profiles, stable PC2 bootstrap, shadow mode, release governance, promotion/rollback, and runtime control without enabling any live-trading path:
 
 - feature stores
 - one explicitly selected active model from Phase 5
@@ -30,6 +30,10 @@ The system keeps the same normalized operational chain and now adds prolonged pa
 - conservative recovery and restart assessment
 - local scheduler/orchestration plans for safe paper automation
 - operational runbooks and archival of session artifacts
+- runtime profiles for `development`, `research`, `paper`, and `shadow`
+- local runtime bootstrap and service-style `start/stop/restart/status`
+- shadow order intents plus shadow-vs-paper and shadow-vs-market reports
+- release registry, active release tracking, promotion, rollback, and governance audit trails
 - economic performance evaluation
 - signal quality analysis by score, probability, and buckets
 - drift detection for data, prediction outputs, and labels
@@ -88,6 +92,8 @@ MicroAlpha-IBKR/
 │   ├── phase7.yaml
 │   ├── phase8.yaml
 │   ├── phase10_11.yaml
+│   ├── phase12_14.yaml
+│   ├── runtime_profiles.yaml
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
@@ -125,16 +131,24 @@ MicroAlpha-IBKR/
 │   ├── readiness.py
 │   ├── reconciliation_report.py
 │   └── session_tracker.py
+├── shadow/
+│   ├── comparison.py
+│   └── session.py
+├── governance/
+│   └── releases.py
 ├── ops/
 │   ├── incidents.py
 │   ├── orchestrator.py
 │   ├── postflight.py
 │   ├── preflight.py
 │   ├── recovery.py
+│   ├── runtime_manager.py
 │   ├── runbooks.py
 │   └── scheduler.py
 ├── docs/
 │   └── runbooks/
+├── scripts/
+│   └── deploy/
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
@@ -326,7 +340,7 @@ Phase 9 adds:
 7. decision-vs-execution comparison between expected order intent and actual broker result
 8. conservative guard rails to reject live mode, disabled safety flags, unsupported symbols, or missing risk checks
 
-Phase 10 and 11 add:
+Phase 10 to 14 add:
 
 1. formal paper-validation sessions with `session_id`, summaries, registry, and final state
 2. broker reconciliation for orders, fills, and positions
@@ -338,6 +352,10 @@ Phase 10 and 11 add:
 8. conservative recovery logic and safe-restart assessment
 9. scheduler/orchestrator planning for local paper automation
 10. runbooks plus archival of session artifacts and reports
+11. runtime profiles for `development`, `paper`, and `shadow`
+12. deployment/runtime bootstrap and service control
+13. shadow-mode session execution without order routing
+14. model releases, promotion, rollback, and governance reporting
 
 ### Feature Registry
 
@@ -619,6 +637,23 @@ python app.py run-paper-session-real --symbols SPY --latest-per-symbol 1
 python app.py execution-status --limit 5
 ```
 
+### Phase 12 to 14 Deployment / Shadow / Governance Commands
+
+```bash
+python app.py start-runtime --profile paper
+python app.py stop-runtime
+python app.py restart-runtime --profile shadow
+python app.py service-status
+python app.py run-shadow-session --symbols SPY --latest-per-symbol 1
+python app.py full-runtime-cycle --profile shadow --symbols SPY --latest-per-symbol 1
+python app.py list-model-releases
+python app.py promote-model --run-id <run_id> --reason "validated release"
+python app.py rollback-model --to <release_id_or_run_id> --reason "rollback after review"
+python app.py show-active-release
+python app.py runtime-status
+python app.py governance-status
+```
+
 ### Phase 10 and 11 Validation / Hardening Commands
 
 ```bash
@@ -635,6 +670,52 @@ python app.py list-alerts --limit 20
 python app.py list-incidents --limit 20
 python app.py generate-runbooks
 ```
+
+### Runtime Profiles
+
+- `development`: local development defaults, no paper submission.
+- `research`: analysis/research profile with no runtime order submission.
+- `paper`: expects `ibkr_paper`, paper broker mode, and paper submission enabled.
+- `shadow`: runs the full inference/decision/risk chain but records intents only and never submits orders.
+
+Profile selection is controlled by `RUNTIME_PROFILE` and the mappings in `config/runtime_profiles.yaml`.
+
+### Deployment On PC2
+
+Use the lightweight deployment helpers:
+
+```bash
+scripts/deploy/bootstrap_pc2.sh
+scripts/deploy/runtime_healthcheck.sh
+```
+
+The runtime bootstrap validates profile coherence, active release presence, report paths, paper-only safety guards, and broker reachability when the profile requires it.
+
+### Shadow Mode
+
+Shadow mode writes:
+
+- `shadow_intents.jsonl`
+- `shadow_session_*.csv`
+- `shadow_session_*.parquet`
+- `shadow_vs_paper_*.csv`
+- `shadow_vs_market_*.csv`
+- `shadow_alignment_summary_*.json`
+
+It reuses the same active model, decision engine, and risk engine as paper mode, but it does not route orders.
+
+### Model Releases And Governance
+
+Release artifacts are tracked under `data/models/releases/` with:
+
+- `release_registry.json`
+- `active_release.json`
+- `release_history.csv`
+- `promotion_audit.csv`
+- `rollback_audit.csv`
+- `release_governance_report.json`
+
+Promotion and rollback update the active model selection automatically through the existing Phase 6 active-model interface.
 
 ### Phase 8 Evaluation and Monitoring Commands
 
@@ -1125,7 +1206,7 @@ If readiness is `NOT_READY`, do not continue automated paper validation until th
 
 ## Limitations
 
-- Phase 10 and 11 still operate in paper only; live trading remains explicitly unsupported.
+- Live trading remains explicitly unsupported.
 - The currently active models are temporary and were trained from simulated data.
 - Replacing those models later should only require new artifacts plus an active-model switch, but the new models still need to respect the existing artifact interface.
 - Binary classification targets can only express `LONG` or `NO_TRADE` cleanly; they are not a true short target.
@@ -1137,6 +1218,9 @@ If readiness is `NOT_READY`, do not continue automated paper validation until th
 - Position reconciliation with broker state is basic and should be treated as a guard rail, not as a final production-grade back-office process.
 - Scheduler/orchestration is local and conservative; it is not a distributed operations platform.
 - Recovery is intentionally limited to safe checks and conservative reconnect attempts, not automatic resubmission.
+- Runtime management is local state management, not a full process supervisor.
+- Shadow-mode comparisons are only as good as the paper and realized-market data available for the same timestamps.
+- Governance checks are conservative but they do not replace manual operational review before a promotion.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
 

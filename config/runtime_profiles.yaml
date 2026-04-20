@@ -1,0 +1,59 @@
+defaults:
+  runtime_profile: development
+  profiles:
+    development:
+      active_execution_backend: mock
+      broker_mode: paper
+      logging_level: INFO
+      scheduler_behavior: manual
+      scheduler_enabled: false
+      safety_guards:
+        require_safe_to_trade: false
+        require_ibkr_paper_connection: false
+        forbid_live_paths: true
+      model_selection_mode: active_release
+      shadow_mode_enabled: false
+      paper_order_submission_enabled: false
+    research:
+      active_execution_backend: mock
+      broker_mode: paper
+      logging_level: INFO
+      scheduler_behavior: manual
+      scheduler_enabled: false
+      safety_guards:
+        require_safe_to_trade: false
+        require_ibkr_paper_connection: false
+        forbid_live_paths: true
+      model_selection_mode: active_release
+      shadow_mode_enabled: false
+      paper_order_submission_enabled: false
+    paper:
+      active_execution_backend: ibkr_paper
+      broker_mode: paper
+      logging_level: INFO
+      scheduler_behavior: scheduled_validation
+      scheduler_enabled: true
+      safety_guards:
+        require_safe_to_trade: true
+        require_ibkr_paper_connection: true
+        forbid_live_paths: true
+      model_selection_mode: active_release
+      shadow_mode_enabled: false
+      paper_order_submission_enabled: true
+    shadow:
+      active_execution_backend: ibkr_paper
+      broker_mode: paper
+      logging_level: INFO
+      scheduler_behavior: scheduled_shadow
+      scheduler_enabled: true
+      safety_guards:
+        require_safe_to_trade: false
+        require_ibkr_paper_connection: false
+        forbid_live_paths: true
+      model_selection_mode: active_release
+      shadow_mode_enabled: true
+      paper_order_submission_enabled: false
+environments:
+  development: {}
+  deploy:
+    runtime_profile: paper

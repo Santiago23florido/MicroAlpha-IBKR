@@ -58,6 +58,38 @@ RUNBOOK_CONTENT = {
 4. Do not continue automated paper validation until the blocking reasons are resolved.
 5. Re-run `python app.py generate-readiness-report` after remediation.
 """,
+    "runtime_deploy.md": """# Runtime Deploy On PC2
+
+1. Activate the intended runtime profile with `RUNTIME_PROFILE=paper` or `RUNTIME_PROFILE=shadow`.
+2. Verify `ACTIVE_EXECUTION_BACKEND` matches the profile.
+3. Run `scripts/deploy/bootstrap_pc2.sh`.
+4. Run `python app.py start-runtime --profile <paper|shadow>`.
+5. Review `python app.py service-status` and `python app.py runtime-status`.
+""",
+    "shadow_mode_ops.md": """# Shadow Mode Operations
+
+1. Set `RUNTIME_PROFILE=shadow`.
+2. Confirm `SHADOW_MODE_ENABLED=true` and `PAPER_ORDER_SUBMISSION_ENABLED=false`.
+3. Run `python app.py run-shadow-session`.
+4. Review `shadow_vs_paper.csv`, `shadow_vs_market.csv`, and `shadow_alignment_summary.json`.
+5. Do not use shadow reports to activate a release without governance review.
+""",
+    "release_promotion.md": """# Release Promotion
+
+1. Run `python app.py list-model-releases`.
+2. Run `python app.py governance-status`.
+3. Promote with `python app.py promote-model --model-name <name> --reason "<reason>"`.
+4. Verify `python app.py show-active-release`.
+5. Verify `python app.py show-active-model` still resolves the intended artifact.
+""",
+    "rollback_release.md": """# Release Rollback
+
+1. Identify a valid target with `python app.py list-model-releases`.
+2. Roll back with `python app.py rollback-model --to <release_id_or_run_id> --reason "<reason>"`.
+3. Verify `python app.py show-active-release`.
+4. Verify `python app.py runtime-status`.
+5. Record the reason and observed impact in the operational log.
+""",
 }
 
 

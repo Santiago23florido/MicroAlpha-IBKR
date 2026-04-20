@@ -17,6 +17,13 @@ from broker.ib_client import IBClientError
 from config import Settings, load_settings
 from config.phase6 import set_active_model_selection
 from config.phase10_11 import load_phase10_11_config
+from governance.releases import (
+    governance_status,
+    list_model_releases,
+    promote_model_release,
+    rollback_model_release,
+    show_active_release,
+)
 from deployment.lan_sync import pull_from_pc2
 from engine.phase6 import risk_check, run_decisions_offline, run_session, show_active_model
 from engine.phase7 import (
@@ -61,11 +68,16 @@ from monitoring.paper_monitor import monitor_paper_session
 from ops.incidents import IncidentStore
 from ops.orchestrator import (
     full_paper_validation_cycle,
+    full_runtime_cycle,
+    governance_status_command,
     generate_runbooks,
     postflight_check_command,
     preflight_check_command,
+    runtime_status_command_wrapper,
     system_health_report,
 )
+from ops.runtime_manager import restart_runtime, service_status, start_runtime, stop_runtime
+from shadow.session import run_shadow_session
 from validation.paper_validation import compare_paper_sessions, reconcile_and_report, run_paper_validation_session
 from validation.readiness import generate_readiness_report
 
@@ -287,6 +299,85 @@ def build_parser() -> argparse.ArgumentParser:
         "generate-runbooks",
         help="Generate the operational runbooks under docs/runbooks/.",
     )
+
+    start_runtime_parser = subparsers.add_parser(
+        "start-runtime",
+        help="Bootstrap and mark the local PC2 runtime as started for the selected runtime profile.",
+    )
+    start_runtime_parser.add_argument("--profile", help="Override the runtime profile.")
+
+    stop_runtime_parser = subparsers.add_parser(
+        "stop-runtime",
+        help="Stop the managed runtime and mark all runtime services as stopped.",
+    )
+
+    restart_runtime_parser = subparsers.add_parser(
+        "restart-runtime",
+        help="Restart the managed runtime for the selected runtime profile.",
+    )
+    restart_runtime_parser.add_argument("--profile", help="Override the runtime profile.")
+
+    subparsers.add_parser(
+        "service-status",
+        help="Show the current managed runtime service state.",
+    )
+
+    shadow_session_parser = subparsers.add_parser(
+        "run-shadow-session",
+        help="Run the inference/decision/risk chain in shadow mode without sending paper orders.",
+    )
+    shadow_session_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    shadow_session_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    shadow_session_parser.add_argument("--latest-per-symbol", type=int, help="How many latest rows per symbol to evaluate.")
+    shadow_session_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    full_runtime_parser = subparsers.add_parser(
+        "full-runtime-cycle",
+        help="Run the full runtime cycle using the configured runtime profile, including paper validation or shadow mode.",
+    )
+    full_runtime_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    full_runtime_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    full_runtime_parser.add_argument("--latest-per-symbol", type=int, help="How many latest rows per symbol to evaluate.")
+    full_runtime_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+    full_runtime_parser.add_argument("--profile", help="Override the runtime profile.")
+
+    subparsers.add_parser(
+        "runtime-status",
+        help="Show the runtime profile, runtime service state, active release, and latest readiness/governance context.",
+    )
+
+    subparsers.add_parser(
+        "governance-status",
+        help="Show active release governance context, critical incidents/alerts, and promotion audit pointers.",
+    )
+
+    subparsers.add_parser(
+        "list-model-releases",
+        help="List registered model releases and their governance status.",
+    )
+
+    show_release_parser = subparsers.add_parser(
+        "show-active-release",
+        help="Show the active model release and its traceability metadata.",
+    )
+
+    promote_parser = subparsers.add_parser(
+        "promote-model",
+        help="Promote a model release after governance checks and update the active model selection.",
+    )
+    promote_parser.add_argument("--model-name", help="Model name to promote.")
+    promote_parser.add_argument("--run-id", help="Run id to promote.")
+    promote_parser.add_argument("--release-id", help="Release id to promote.")
+    promote_parser.add_argument("--actor", default="cli", help="Actor or operator initiating the promotion.")
+    promote_parser.add_argument("--reason", default="manual promotion", help="Reason for the promotion.")
+
+    rollback_parser = subparsers.add_parser(
+        "rollback-model",
+        help="Rollback to a previously known release and restore its active-model mapping.",
+    )
+    rollback_parser.add_argument("--to", required=True, help="Target release id or run id for rollback.")
+    rollback_parser.add_argument("--actor", default="cli", help="Actor or operator initiating the rollback.")
+    rollback_parser.add_argument("--reason", default="manual rollback", help="Reason for the rollback.")
 
     execution_status_parser = subparsers.add_parser(
         "execution-status",
@@ -794,6 +885,90 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "generate-runbooks":
             print_result(generate_runbooks(settings))
+            return 0
+
+        if args.command == "start-runtime":
+            print_result(start_runtime(settings, profile_name=args.profile))
+            return 0
+
+        if args.command == "stop-runtime":
+            print_result(stop_runtime(settings))
+            return 0
+
+        if args.command == "restart-runtime":
+            print_result(restart_runtime(settings, profile_name=args.profile))
+            return 0
+
+        if args.command == "service-status":
+            print_result(service_status(settings))
+            return 0
+
+        if args.command == "run-shadow-session":
+            print_result(
+                run_shadow_session(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    latest_per_symbol=args.latest_per_symbol,
+                    decision_log_path=args.decision_log_path,
+                )
+            )
+            return 0
+
+        if args.command == "full-runtime-cycle":
+            print_result(
+                full_runtime_cycle(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    latest_per_symbol=args.latest_per_symbol,
+                    decision_log_path=args.decision_log_path,
+                    profile_name=args.profile,
+                )
+            )
+            return 0
+
+        if args.command == "runtime-status":
+            print_result(runtime_status_command_wrapper(settings))
+            return 0
+
+        if args.command == "governance-status":
+            print_result(governance_status_command(settings))
+            return 0
+
+        if args.command == "list-model-releases":
+            print_result(list_model_releases(settings))
+            return 0
+
+        if args.command == "show-active-release":
+            print_result(show_active_release(settings))
+            return 0
+
+        if args.command == "promote-model":
+            if not any([args.model_name, args.run_id, args.release_id]):
+                print_result({"status": "error", "message": "promote-model requires --model-name, --run-id, or --release-id."})
+                return 1
+            print_result(
+                promote_model_release(
+                    settings,
+                    model_name=args.model_name,
+                    run_id=args.run_id,
+                    release_id=args.release_id,
+                    actor=args.actor,
+                    reason=args.reason,
+                )
+            )
+            return 0
+
+        if args.command == "rollback-model":
+            print_result(
+                rollback_model_release(
+                    settings,
+                    to=args.to,
+                    actor=args.actor,
+                    reason=args.reason,
+                )
+            )
             return 0
 
         if args.command == "execution-status":

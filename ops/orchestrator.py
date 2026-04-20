@@ -5,14 +5,18 @@ from typing import Any, Sequence
 
 from config import Settings
 from config.phase10_11 import load_phase10_11_config
+from config.phase12_14 import resolve_runtime_profile
 from evaluation.io import write_json
+from governance.releases import governance_status, show_active_release
 from monitoring.alerts import AlertStore
 from monitoring.paper_monitor import monitor_paper_session
 from ops.incidents import IncidentStore
 from ops.postflight import postflight_check
 from ops.preflight import preflight_check
 from ops.runbooks import generate_runbooks as _generate_runbooks
+from ops.runtime_manager import bootstrap_runtime, runtime_status as runtime_status_command, start_runtime
 from ops.scheduler import build_scheduler_plan
+from shadow.session import run_shadow_session
 from validation.paper_validation import compare_paper_sessions, run_paper_validation_session
 from validation.readiness import generate_readiness_report
 from validation.session_tracker import SessionTracker
@@ -110,6 +114,74 @@ def preflight_check_command(settings: Settings, *, symbols: Sequence[str] | None
 
 def postflight_check_command(settings: Settings, *, session_id: str) -> dict[str, Any]:
     return postflight_check(settings, session_id=session_id)
+
+
+def full_runtime_cycle(
+    settings: Settings,
+    *,
+    symbols: Sequence[str] | None = None,
+    feature_root: str | Path | None = None,
+    latest_per_symbol: int | None = None,
+    decision_log_path: str | None = None,
+    profile_name: str | None = None,
+) -> dict[str, Any]:
+    profile = resolve_runtime_profile(settings, profile_name=profile_name)
+    bootstrap = bootstrap_runtime(settings, profile_name=profile.name)
+    if bootstrap["status"] != "ok":
+        return {"status": "error", "stage": "bootstrap", "bootstrap": bootstrap}
+
+    runtime = start_runtime(settings, profile_name=profile.name)
+    if runtime["status"] != "ok":
+        return {"status": "error", "stage": "start_runtime", "runtime": runtime}
+
+    if profile.shadow_mode_enabled:
+        session = run_shadow_session(
+            settings,
+            symbols=symbols,
+            feature_root=feature_root,
+            latest_per_symbol=latest_per_symbol,
+            decision_log_path=decision_log_path,
+        )
+        health = system_health_report(settings)
+        governance = governance_status(settings)
+        return {
+            "status": "ok",
+            "runtime_profile": profile.name,
+            "mode": "shadow",
+            "bootstrap": bootstrap,
+            "runtime": runtime,
+            "session": session,
+            "system_health": health,
+            "governance": governance,
+            "active_release": show_active_release(settings).get("active_release"),
+        }
+
+    validation = full_paper_validation_cycle(
+        settings,
+        symbols=symbols,
+        feature_root=feature_root,
+        latest_per_symbol=latest_per_symbol,
+        decision_log_path=decision_log_path,
+    )
+    governance = governance_status(settings)
+    return {
+        "status": validation.get("status", "error"),
+        "runtime_profile": profile.name,
+        "mode": "paper_validation",
+        "bootstrap": bootstrap,
+        "runtime": runtime,
+        "validation": validation,
+        "governance": governance,
+        "active_release": show_active_release(settings).get("active_release"),
+    }
+
+
+def governance_status_command(settings: Settings) -> dict[str, Any]:
+    return governance_status(settings)
+
+
+def runtime_status_command_wrapper(settings: Settings) -> dict[str, Any]:
+    return runtime_status_command(settings)
 
 
 def _read_optional_json(path: Path) -> dict[str, Any]:
