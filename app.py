@@ -17,6 +17,7 @@ from broker.ib_client import IBClientError
 from config import Settings, load_settings
 from config.phase6 import set_active_model_selection
 from config.phase10_11 import load_phase10_11_config
+from data_sources import fetch_training_data, normalize_training_data, prepare_training_data
 from governance.releases import (
     governance_status,
     list_model_releases,
@@ -157,6 +158,39 @@ def build_parser() -> argparse.ArgumentParser:
     build_labels_parser.add_argument("--end-date", help="Filter features until this session date (YYYY-MM-DD).")
     build_labels_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     build_labels_parser.add_argument("--output-root", help="Override the label parquet output root.")
+
+    fetch_training_parser = subparsers.add_parser(
+        "fetch-training-data",
+        help="Download bootstrap training data from a historical provider such as Polygon and export a canonical training dataset.",
+    )
+    fetch_training_parser.add_argument("--provider", required=True, help="Historical bootstrap provider. Currently supported: polygon.")
+    fetch_training_parser.add_argument("--symbol", required=True, help="Ticker symbol to download.")
+    fetch_training_parser.add_argument("--start-date", required=True, help="Inclusive start date in YYYY-MM-DD.")
+    fetch_training_parser.add_argument("--end-date", required=True, help="Inclusive end date in YYYY-MM-DD.")
+    fetch_training_parser.add_argument("--interval", required=True, help="Provider interval such as 1m.")
+    fetch_training_parser.add_argument("--output-path", required=True, help="Canonical CSV/Parquet output path.")
+
+    normalize_training_parser = subparsers.add_parser(
+        "normalize-training-data",
+        help="Normalize a manually downloaded historical dataset such as Polygon CSV into the canonical bootstrap-training schema.",
+    )
+    normalize_training_parser.add_argument("--provider", required=True, help="Historical bootstrap provider. Currently supported: polygon.")
+    normalize_training_parser.add_argument("--input-path", required=True, help="Path to the raw provider CSV/Parquet file.")
+    normalize_training_parser.add_argument("--output-path", required=True, help="Canonical CSV/Parquet output path.")
+    normalize_training_parser.add_argument("--symbol", help="Optional symbol override.")
+    normalize_training_parser.add_argument("--interval", help="Optional interval metadata such as 1m.")
+
+    prepare_training_parser = subparsers.add_parser(
+        "prepare-training-data",
+        help="Convenience command to fetch or normalize bootstrap historical data and export a training-ready dataset.",
+    )
+    prepare_training_parser.add_argument("--provider", required=True, help="Historical bootstrap provider. Currently supported: polygon.")
+    prepare_training_parser.add_argument("--symbol", help="Ticker symbol. Required for API mode.")
+    prepare_training_parser.add_argument("--start-date", help="Inclusive start date in YYYY-MM-DD for API mode.")
+    prepare_training_parser.add_argument("--end-date", help="Inclusive end date in YYYY-MM-DD for API mode.")
+    prepare_training_parser.add_argument("--interval", help="Provider interval such as 1m.")
+    prepare_training_parser.add_argument("--output-path", help="Canonical CSV/Parquet output path.")
+    prepare_training_parser.add_argument("--input-path", help="If supplied, use manual CSV/Parquet normalization mode.")
 
     train_baseline_parser = subparsers.add_parser(
         "train-baseline",
@@ -712,6 +746,48 @@ def main(argv: Sequence[str] | None = None) -> int:
                     end_date=args.end_date,
                     feature_root=args.feature_root,
                     output_root=args.output_root,
+                )
+            )
+            return 0
+
+        if args.command == "fetch-training-data":
+            print_result(
+                fetch_training_data(
+                    settings,
+                    provider=args.provider,
+                    symbol=args.symbol,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    interval=args.interval,
+                    output_path=args.output_path,
+                )
+            )
+            return 0
+
+        if args.command == "normalize-training-data":
+            print_result(
+                normalize_training_data(
+                    settings,
+                    provider=args.provider,
+                    input_path=args.input_path,
+                    output_path=args.output_path,
+                    symbol=args.symbol,
+                    interval=args.interval,
+                )
+            )
+            return 0
+
+        if args.command == "prepare-training-data":
+            print_result(
+                prepare_training_data(
+                    settings,
+                    provider=args.provider,
+                    symbol=args.symbol,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    interval=args.interval,
+                    output_path=args.output_path,
+                    input_path=args.input_path,
                 )
             )
             return 0

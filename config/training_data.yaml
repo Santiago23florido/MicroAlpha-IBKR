@@ -1,0 +1,17 @@
+defaults:
+  polygon:
+    api_base_url: https://api.polygon.io
+    default_symbol: SPY
+    default_interval: 1m
+    default_start_date: 2025-01-01
+    default_end_date: 2025-03-31
+    synthetic_spread_bps: 2.0
+    default_depth_size: 100
+    output_root: data/training/polygon
+    write_parquet: true
+    write_manifest: true
+    api_rate_limit_sleep_seconds: 12.0
+    request_timeout_seconds: 30.0
+environments:
+  development: {}
+  deploy: {}

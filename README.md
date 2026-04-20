@@ -7,7 +7,7 @@ This repository now supports the combined Phase 12, Phase 13, and Phase 14 layer
 - `PC2`: collector and operational raw data source
 - `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-The system keeps the same normalized operational chain and now adds deployment/runtime profiles, stable PC2 bootstrap, shadow mode, release governance, promotion/rollback, and runtime control without enabling any live-trading path:
+The system keeps the same normalized operational chain and now adds deployment/runtime profiles, stable PC2 bootstrap, shadow mode, release governance, promotion/rollback, runtime control, and a Polygon Basic bootstrap training-data path without enabling any live-trading path:
 
 - feature stores
 - one explicitly selected active model from Phase 5
@@ -34,6 +34,7 @@ The system keeps the same normalized operational chain and now adds deployment/r
 - local runtime bootstrap and service-style `start/stop/restart/status`
 - shadow order intents plus shadow-vs-paper and shadow-vs-market reports
 - release registry, active release tracking, promotion, rollback, and governance audit trails
+- a second historical training-data source based on Polygon Basic for fast bootstrap model training
 - economic performance evaluation
 - signal quality analysis by score, probability, and buckets
 - drift detection for data, prediction outputs, and labels
@@ -88,6 +89,7 @@ MicroAlpha-IBKR/
 │   ├── feature_sets.yaml
 │   ├── modeling.yaml
 │   ├── active_model.yaml
+│   ├── training_data.yaml
 │   ├── phase6.yaml
 │   ├── phase7.yaml
 │   ├── phase8.yaml
@@ -99,6 +101,11 @@ MicroAlpha-IBKR/
 │   └── deployment.yaml
 ├── deployment/
 │   └── lan_sync.py
+├── data_sources/
+│   ├── polygon_client.py
+│   ├── polygon_download.py
+│   ├── polygon_normalizer.py
+│   └── training_dataset_export.py
 ├── engine/
 │   ├── phase6.py
 │   └── phase7.py
@@ -599,6 +606,16 @@ python app.py validate-features --feature-set hybrid_intraday
 python app.py build-labels --feature-set hybrid_intraday --target-mode classification_binary
 python app.py train-baseline --feature-set hybrid_intraday --target-mode classification_binary --model logistic_regression
 python app.py evaluate-baseline
+```
+
+### Bootstrap Historical Training Data via Polygon Basic
+
+```bash
+python app.py fetch-training-data --provider polygon --symbol SPY --start-date 2025-01-01 --end-date 2025-03-31 --interval 1m --output-path data/training/polygon/SPY_1m_training.csv
+python app.py normalize-training-data --provider polygon --input-path path/to/raw_polygon.csv --output-path data/training/polygon/SPY_manual_training.csv
+python app.py prepare-training-data --provider polygon --symbol SPY --start-date 2025-01-01 --end-date 2025-03-31 --interval 1m --output-path data/training/polygon/SPY_1m_training.csv
+python app.py train --model-type baseline --data-path data/training/polygon/SPY_1m_training.csv
+python app.py train --model-type deep --data-path data/training/polygon/SPY_1m_training.csv
 ```
 
 ### Comparison and Main Phase 5 Runner
@@ -1221,8 +1238,148 @@ If readiness is `NOT_READY`, do not continue automated paper validation until th
 - Runtime management is local state management, not a full process supervisor.
 - Shadow-mode comparisons are only as good as the paper and realized-market data available for the same timestamps.
 - Governance checks are conservative but they do not replace manual operational review before a promotion.
+- Polygon Basic bootstrap data is OHLCV-oriented. Synthetic `bid`, `ask`, `bid_size`, and `ask_size` are generated when the source does not provide them, and `last` defaults to `close`.
+- Polygon bootstrap datasets are intended to unblock early training, not to replace the IBKR operational data path for execution or final operational validation.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
+
+## Polygon Basic Bootstrap Training Data
+
+Polygon Basic is integrated as a second historical data source so you can start training immediately even if the current IBKR example CSV is not useful yet.
+
+- IBKR remains the operational route for collection, paper execution, reconciliation, and validation.
+- Polygon Basic is a bootstrap route for historical training data.
+- The integration does not change the execution stack and does not replace IBKR.
+
+### Why This Exists
+
+- It gives you a fast, free path to a first trainable dataset.
+- It lets you bootstrap Phase 5 style experimentation before the operational IBKR data store is mature.
+- It keeps the provider-specific logic isolated under `data_sources/`.
+
+### Supported Modes
+
+1. API mode:
+- Reads `POLYGON_API_KEY` from `.env`
+- Downloads historical aggregates from Polygon Basic
+- Normalizes them into the canonical training schema
+- Writes CSV, optional Parquet, and optional manifest JSON
+
+2. Manual CSV mode:
+- Reads a CSV or Parquet downloaded manually from Polygon
+- Detects Polygon-style columns such as `t/o/h/l/c/v`
+- Normalizes into the same canonical schema
+- Writes the same output artifacts as API mode
+
+### Canonical Output Schema
+
+Every exported bootstrap dataset is normalized to a stable schema:
+
+- `timestamp`
+- `symbol`
+- `open`
+- `high`
+- `low`
+- `close`
+- `last`
+- `volume`
+- `bid`
+- `ask`
+- `bid_size`
+- `ask_size`
+- `source`
+- `provider`
+- `interval`
+- `event_type`
+- `collected_at`
+- `bootstrap_source`
+- `market_data_mode`
+- `synthetic_bid_ask_flag`
+- `synthetic_depth_flag`
+
+### Real vs Synthetic Fields
+
+When Polygon only provides OHLCV:
+
+- real fields usually are `timestamp`, `open`, `high`, `low`, `close`, and `volume`
+- `last` defaults to `close` if missing
+- `bid` and `ask` are synthetic using:
+  `bid = close * (1 - spread_bps / 20000)`
+  `ask = close * (1 + spread_bps / 20000)`
+- `bid_size` and `ask_size` default to `POLYGON_DEFAULT_DEPTH_SIZE`
+
+These synthetic fields are never hidden:
+
+- `synthetic_bid_ask_flag`
+- `synthetic_depth_flag`
+- manifest metadata with `real_columns` and `synthetic_columns`
+
+### Output Files
+
+By default the integration writes under `data/training/polygon/`:
+
+- canonical CSV at the `--output-path`
+- optional Parquet with the same basename
+- optional manifest JSON with dataset metadata and field provenance
+
+### Commands
+
+API mode:
+
+```bash
+python app.py fetch-training-data \
+  --provider polygon \
+  --symbol SPY \
+  --start-date 2025-01-01 \
+  --end-date 2025-03-31 \
+  --interval 1m \
+  --output-path data/training/polygon/SPY_1m_training.csv
+```
+
+Manual CSV mode:
+
+```bash
+python app.py normalize-training-data \
+  --provider polygon \
+  --input-path path/to/raw_polygon.csv \
+  --output-path data/training/polygon/SPY_manual_training.csv
+```
+
+Main convenience command:
+
+```bash
+python app.py prepare-training-data \
+  --provider polygon \
+  --symbol SPY \
+  --start-date 2025-01-01 \
+  --end-date 2025-03-31 \
+  --interval 1m \
+  --output-path data/training/polygon/SPY_1m_training.csv
+```
+
+### Training Immediately After Preparation
+
+Fastest path:
+
+```bash
+python app.py prepare-training-data \
+  --provider polygon \
+  --symbol SPY \
+  --start-date 2025-01-01 \
+  --end-date 2025-03-31 \
+  --interval 1m \
+  --output-path data/training/polygon/SPY_1m_training.csv
+
+python app.py train --model-type baseline --data-path data/training/polygon/SPY_1m_training.csv
+```
+
+Optional deep model:
+
+```bash
+python app.py train --model-type deep --data-path data/training/polygon/SPY_1m_training.csv
+```
+
+If you later want to route the data through the full Phase 5 flow, use the bootstrap dataset to seed a normalized research dataset, then continue with the usual feature, label, and experiment commands. The Polygon integration does not bypass or replace that flow; it just gets you to a first trainable file quickly.
 
 ## Next Phase
 
