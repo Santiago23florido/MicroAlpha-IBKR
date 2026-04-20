@@ -1,13 +1,13 @@
-# MicroAlpha-IBKR Phase 9: IBKR Paper Execution, Evaluation, Monitoring, and Broker-Ready Paper Routing on Top of the LAN Modeling Pipeline
+# MicroAlpha-IBKR Phase 10 and 11: Paper Validation, Reconciliation, Monitoring, Hardening, and Safe Ops Automation on Top of the LAN Modeling Pipeline
 
 ## Purpose
 
-This repository now supports the Phase 9 IBKR Paper execution layer on top of the Phase 5, Phase 6, Phase 7, and Phase 8 workflow while keeping the dual-machine architecture intact:
+This repository now supports the combined Phase 10 and Phase 11 layer on top of the Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 workflow while keeping the dual-machine architecture intact:
 
 - `PC2`: collector and operational raw data source
 - `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-Phase 9 keeps the same normalized operational chain and adds a real IBKR Paper backend without tying execution to any specific model artifact. The system now connects:
+The system keeps the same normalized operational chain and now adds prolonged paper validation, broker reconciliation, continuous monitoring, alerts, readiness review, conservative recovery logic, runbooks, and controlled local orchestration without enabling any live-trading path:
 
 - feature stores
 - one explicitly selected active model from Phase 5
@@ -22,6 +22,14 @@ Phase 9 keeps the same normalized operational chain and adds a real IBKR Paper b
 - structured journals for orders, fills, positions, and PnL
 - offline and session runners with mock paper routing
 - a real paper session runner for IBKR Paper
+- formal paper-validation sessions with registry, summaries, and config snapshots
+- broker-vs-system reconciliation for orders, fills, and positions
+- structured alerts and incidents
+- readiness and system-health reporting
+- preflight and postflight checks
+- conservative recovery and restart assessment
+- local scheduler/orchestration plans for safe paper automation
+- operational runbooks and archival of session artifacts
 - economic performance evaluation
 - signal quality analysis by score, probability, and buckets
 - drift detection for data, prediction outputs, and labels
@@ -64,6 +72,7 @@ Important operational note:
 - tracks drift between current and historical feature / prediction distributions
 - writes structured Phase 8 reports for diagnostics and model comparison
 - can connect to IBKR Paper for real paper routing while keeping conservative paper-only safety guards
+- can validate whether paper operation is stable enough to continue before any future stage
 
 ## Project Structure
 
@@ -78,6 +87,7 @@ MicroAlpha-IBKR/
 │   ├── phase6.yaml
 │   ├── phase7.yaml
 │   ├── phase8.yaml
+│   ├── phase10_11.yaml
 │   ├── risk.yaml
 │   ├── symbols.yaml
 │   └── deployment.yaml
@@ -107,7 +117,24 @@ MicroAlpha-IBKR/
 │   ├── ib_client.py
 │   └── orders.py
 ├── monitoring/
-│   └── drift.py
+│   ├── alerts.py
+│   ├── drift.py
+│   └── paper_monitor.py
+├── validation/
+│   ├── paper_validation.py
+│   ├── readiness.py
+│   ├── reconciliation_report.py
+│   └── session_tracker.py
+├── ops/
+│   ├── incidents.py
+│   ├── orchestrator.py
+│   ├── postflight.py
+│   ├── preflight.py
+│   ├── recovery.py
+│   ├── runbooks.py
+│   └── scheduler.py
+├── docs/
+│   └── runbooks/
 ├── data/
 │   ├── loader.py
 │   ├── cleaning.py
@@ -197,6 +224,7 @@ MicroAlpha-IBKR/
 11. `PC1` runs Phase 6 inference, decision, and risk.
 12. `PC1` can run Phase 7 mock paper execution for offline and session validation.
 13. `PC1` can run Phase 9 IBKR Paper execution through the same order-management interface.
+14. `PC1` can run Phase 10 and 11 paper-validation cycles with monitoring, reconciliation, readiness, and archival.
 
 `PC2` remains the operational source of truth for collection.  
 `PC1` remains the research and experiment node.
@@ -237,7 +265,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Phase 5, 6, 7, 8, and 9 Architecture
+## Phase 5, 6, 7, 8, 9, 10, and 11 Architecture
 
 Phase 5 remains the modeling layer:
 
@@ -297,6 +325,19 @@ Phase 9 adds:
 6. execution latency metrics from decision to submit, acknowledgment, and fill
 7. decision-vs-execution comparison between expected order intent and actual broker result
 8. conservative guard rails to reject live mode, disabled safety flags, unsupported symbols, or missing risk checks
+
+Phase 10 and 11 add:
+
+1. formal paper-validation sessions with `session_id`, summaries, registry, and final state
+2. broker reconciliation for orders, fills, and positions
+3. structured alerts and incidents with severity and category
+4. execution-health and stability metrics across sessions
+5. multi-session comparison and validation leaderboards
+6. readiness evaluation with `READY`, `REVIEW_NEEDED`, and `NOT_READY`
+7. preflight and postflight operational gates
+8. conservative recovery logic and safe-restart assessment
+9. scheduler/orchestrator planning for local paper automation
+10. runbooks plus archival of session artifacts and reports
 
 ### Feature Registry
 
@@ -578,6 +619,23 @@ python app.py run-paper-session-real --symbols SPY --latest-per-symbol 1
 python app.py execution-status --limit 5
 ```
 
+### Phase 10 and 11 Validation / Hardening Commands
+
+```bash
+python app.py run-paper-validation-session --symbols SPY --latest-per-symbol 1
+python app.py reconcile-broker-state
+python app.py monitor-paper-session --iterations 1
+python app.py compare-paper-sessions
+python app.py generate-readiness-report
+python app.py system-health-report
+python app.py full-paper-validation-cycle --symbols SPY --latest-per-symbol 1
+python app.py preflight-check
+python app.py postflight-check
+python app.py list-alerts --limit 20
+python app.py list-incidents --limit 20
+python app.py generate-runbooks
+```
+
 ### Phase 8 Evaluation and Monitoring Commands
 
 ```bash
@@ -747,6 +805,37 @@ This command:
 8. updates positions, PnL, and reconciliation journals
 9. writes Phase 7 and Phase 8 outputs for later comparison against mock runs
 
+Phase 10 and 11 paper validation session:
+
+```bash
+python app.py run-paper-validation-session --symbols SPY --latest-per-symbol 1
+```
+
+This command:
+
+1. opens a formal validation session with a tracked `session_id`
+2. saves config, model, backend, and scheduler snapshots
+3. optionally runs preflight checks
+4. runs the real paper session against `ibkr_paper`
+5. monitors health, latency, drift, and risk-block behavior
+6. reconciles broker-vs-system state
+7. generates readiness and session summaries
+8. writes alerts, incidents, and auditable artifacts under `data/reports/sessions/<session_id>/`
+
+Full validation cycle:
+
+```bash
+python app.py full-paper-validation-cycle --symbols SPY --latest-per-symbol 1
+```
+
+This command adds:
+
+1. preflight gating
+2. postflight validation
+3. archival
+4. consolidated system-health reporting
+5. scheduler-plan snapshots for safe automation review
+
 Phase 8 report generation:
 
 ```bash
@@ -788,6 +877,38 @@ Use the reports this way:
 - compare `run_report.json` files across sessions with `compare-runs` to rank runs by PnL, Sharpe, and drawdown
 - use `execution_metrics.json` to inspect fill ratio, rejection rate, cancel rate, slippage, and broker latency
 - use `mock_vs_real_comparison.json` to compare similar runs across the `mock` and `ibkr_paper` backends
+
+## Paper Validation Reports
+
+Phase 10 and 11 write per-session artifacts under:
+
+```text
+data/reports/sessions/<session_id>/
+```
+
+The most important files are:
+
+- `session_summary.json`
+- `preflight_check.json`
+- `reconciliation_summary.json`
+- `alerts_summary.csv`
+- `incidents_summary.csv`
+- `readiness_report.json`
+- `system_health.json`
+- `postflight_check.json`
+- `config_snapshot.json`
+- `active_model_snapshot.json`
+- `backend_snapshot.json`
+- `scheduler_plan.json`
+
+Use them this way:
+
+- `session_summary.json`: what happened in the session, counts, PnL, final state
+- `reconciliation_summary.json`: whether broker and internal state matched
+- `alerts_summary.csv`: operational warnings and critical issues
+- `incidents_summary.csv`: classified failures and recovery context
+- `readiness_report.json`: whether the system is safe to continue in paper
+- `system_health.json`: latest monitoring status across broker, model, drift, and execution
 
 Practical edge heuristic:
 
@@ -954,9 +1075,57 @@ Before running `run-paper-session-real`, verify:
 5. `show-execution-backend` reports `broker_mode=paper`
 6. `broker-healthcheck` returns `status=ok`
 
+Before running `full-paper-validation-cycle`, also verify:
+
+1. `preflight-check` returns `status=ok`
+2. `generate-runbooks` has created `docs/runbooks/`
+3. no unresolved critical alerts or incidents remain from the previous session
+4. `SAFE_TO_TRADE` and `ALLOW_SESSION_EXECUTION` are enabled intentionally for paper only
+
+## Preflight, Postflight, and Readiness
+
+Preflight checks validate:
+
+- active model loadability
+- backend = `ibkr_paper`
+- broker mode = `paper`
+- broker reachability
+- writable report paths
+- risk config availability
+- symbol validity
+- safe-to-trade flags
+
+Postflight checks validate:
+
+- required reports were created
+- reconciliation completed
+- alerts were summarized
+- archival was completed
+- safe restart remains acceptable
+
+Readiness can return:
+
+- `READY`
+- `REVIEW_NEEDED`
+- `NOT_READY`
+
+The engine uses:
+
+- reconciliation severity
+- alert count and critical alerts
+- drawdown
+- drift
+- latency
+- session failure rate
+- connectivity stability
+- positions reconciled
+- minimum completed sessions
+
+If readiness is `NOT_READY`, do not continue automated paper validation until the blocking items are resolved.
+
 ## Limitations
 
-- Phase 9 adds a real IBKR Paper backend, but it still targets paper only and must not be used for live trading.
+- Phase 10 and 11 still operate in paper only; live trading remains explicitly unsupported.
 - The currently active models are temporary and were trained from simulated data.
 - Replacing those models later should only require new artifacts plus an active-model switch, but the new models still need to respect the existing artifact interface.
 - Binary classification targets can only express `LONG` or `NO_TRADE` cleanly; they are not a true short target.
@@ -966,6 +1135,8 @@ Before running `run-paper-session-real`, verify:
 - Small sample runs can generate incomplete trade statistics and weak calibration analysis.
 - Current economic metrics can now include real paper fills, but they still depend on broker-paper availability and on limited local reconciliation rather than a persistent execution store.
 - Position reconciliation with broker state is basic and should be treated as a guard rail, not as a final production-grade back-office process.
+- Scheduler/orchestration is local and conservative; it is not a distributed operations platform.
+- Recovery is intentionally limited to safe checks and conservative reconnect attempts, not automatic resubmission.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
 
@@ -978,5 +1149,7 @@ The next phase should build on this by adding:
 - richer cancel/replace and open-order recovery flows
 - real-time feature streaming and session orchestration on the server-side PC2 deployment
 - promotion rules for switching the active model safely
+- more durable incident management and external alert routing
+- longer-horizon validation with more session history before considering any future progression
 - alert routing outside files, such as email, chat, or dashboard sinks
 - tighter validation against real paper fills and real-time feature drift
