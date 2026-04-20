@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,8 @@ from config import Settings
 from data.historical_loader import load_historical_dataset
 from features.preprocessing import prepare_training_dataframe
 from models.registry import ModelRegistry
+
+logger = logging.getLogger("microalpha.training.deep")
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,7 @@ def train_deep_model(
     epochs: int = 6,
     set_active: bool = True,
 ) -> dict[str, object]:
+    device = _resolve_training_device()
     raw_frame = load_historical_dataset(settings, data_path)
     prepared = prepare_training_dataframe(raw_frame, settings)
     frame = prepared.frame.reset_index(drop=True)
@@ -92,23 +96,69 @@ def train_deep_model(
     if len(valid_dataset) == 0:
         valid_dataset = train_dataset
 
-    model = DeepLOBLite(feature_dim=len(feature_columns))
+    model = DeepLOBLite(feature_dim=len(feature_columns)).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     cls_loss_fn = nn.CrossEntropyLoss()
     reg_loss_fn = nn.MSELoss()
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=32, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=16,
+        shuffle=True,
+        pin_memory=device.type == "cuda",
+    )
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=32,
+        shuffle=False,
+        pin_memory=device.type == "cuda",
+    )
+    total_batches = len(train_loader)
+    batch_log_interval = max(total_batches // 10, 1)
+    logger.info(
+        "Deep training device | device=%s",
+        _describe_device(device),
+    )
 
-    for _ in range(epochs):
+    for epoch_index in range(epochs):
         model.train()
-        for features, target_class, target_return in train_loader:
+        cumulative_loss = 0.0
+        logger.info(
+            "Deep training progress | epoch %s/%s | batches=%s",
+            epoch_index + 1,
+            epochs,
+            total_batches,
+        )
+        for batch_index, (features, target_class, target_return) in enumerate(train_loader, start=1):
+            features = features.to(device, non_blocking=device.type == "cuda")
+            target_class = target_class.to(device, non_blocking=device.type == "cuda")
+            target_return = target_return.to(device, non_blocking=device.type == "cuda")
             optimizer.zero_grad()
             logits, predicted_return = model(features)
             loss = cls_loss_fn(logits, target_class) + 0.1 * reg_loss_fn(predicted_return, target_return)
             loss.backward()
             optimizer.step()
+            cumulative_loss += float(loss.item())
+            if batch_index == total_batches or batch_index % batch_log_interval == 0:
+                logger.info(
+                    "Deep training progress | epoch %s/%s | batch %s/%s | loss=%.6f",
+                    epoch_index + 1,
+                    epochs,
+                    batch_index,
+                    total_batches,
+                    float(loss.item()),
+                )
 
-    metrics = _evaluate_model(model, valid_loader)
+        epoch_metrics = _evaluate_model(model, valid_loader, device)
+        logger.info(
+            "Deep training epoch complete | epoch %s/%s | avg_loss=%.6f | accuracy=%.4f | return_mae_bps=%.4f",
+            epoch_index + 1,
+            epochs,
+            cumulative_loss / max(total_batches, 1),
+            epoch_metrics["accuracy"],
+            epoch_metrics["return_mae_bps"],
+        )
+
+    metrics = _evaluate_model(model, valid_loader, device)
     artifact_id = f"deep-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}"
     artifact_dir = Path(settings.models.artifacts_dir) / "deep"
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -181,7 +231,7 @@ def _build_sequence_batch(
     )
 
 
-def _evaluate_model(model: nn.Module, valid_loader: DataLoader) -> dict[str, float]:
+def _evaluate_model(model: nn.Module, valid_loader: DataLoader, device: torch.device) -> dict[str, float]:
     model.eval()
     actual_classes = []
     predicted_classes = []
@@ -189,6 +239,9 @@ def _evaluate_model(model: nn.Module, valid_loader: DataLoader) -> dict[str, flo
     predicted_returns = []
     with torch.no_grad():
         for features, target_class, target_return in valid_loader:
+            features = features.to(device, non_blocking=device.type == "cuda")
+            target_class = target_class.to(device, non_blocking=device.type == "cuda")
+            target_return = target_return.to(device, non_blocking=device.type == "cuda")
             logits, predicted_return = model(features)
             predicted_class = torch.argmax(logits, dim=1)
             actual_classes.extend(target_class.cpu().numpy().tolist())
@@ -199,3 +252,16 @@ def _evaluate_model(model: nn.Module, valid_loader: DataLoader) -> dict[str, flo
         "accuracy": float(accuracy_score(actual_classes, predicted_classes)),
         "return_mae_bps": float(mean_absolute_error(actual_returns, predicted_returns)),
     }
+
+
+def _resolve_training_device() -> torch.device:
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+def _describe_device(device: torch.device) -> str:
+    if device.type != "cuda":
+        return "cpu"
+    return f"cuda:{torch.cuda.current_device()} ({torch.cuda.get_device_name(torch.cuda.current_device())})"

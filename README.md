@@ -7,7 +7,7 @@ This repository now supports the combined Phase 12, Phase 13, and Phase 14 layer
 - `PC2`: collector and operational raw data source
 - `PC1`: LAN import, validation, feature engineering, labeling, dataset building, model comparison, active-model selection, inference, decision, risk, paper execution, order journaling, and execution status
 
-The system keeps the same normalized operational chain and now adds deployment/runtime profiles, stable PC2 bootstrap, shadow mode, release governance, promotion/rollback, and runtime control without enabling any live-trading path:
+The system keeps the same normalized operational chain and now adds deployment/runtime profiles, stable PC2 bootstrap, shadow mode, release governance, promotion/rollback, runtime control, and an IBKR-only historical backfill path for training bootstrap without enabling any live-trading path:
 
 - feature stores
 - one explicitly selected active model from Phase 5
@@ -34,6 +34,7 @@ The system keeps the same normalized operational chain and now adds deployment/r
 - local runtime bootstrap and service-style `start/stop/restart/status`
 - shadow order intents plus shadow-vs-paper and shadow-vs-market reports
 - release registry, active release tracking, promotion, rollback, and governance audit trails
+- an IBKR-only historical backfill path for bootstrap model training
 - economic performance evaluation
 - signal quality analysis by score, probability, and buckets
 - drift detection for data, prediction outputs, and labels
@@ -88,6 +89,7 @@ MicroAlpha-IBKR/
 │   ├── feature_sets.yaml
 │   ├── modeling.yaml
 │   ├── active_model.yaml
+│   ├── training_data.yaml
 │   ├── phase6.yaml
 │   ├── phase7.yaml
 │   ├── phase8.yaml
@@ -99,6 +101,14 @@ MicroAlpha-IBKR/
 │   └── deployment.yaml
 ├── deployment/
 │   └── lan_sync.py
+├── ingestion/
+│   ├── ibkr_historical_backfill.py
+│   ├── ibkr_history_planner.py
+│   ├── ibkr_rate_limiter.py
+│   └── ibkr_resume_store.py
+├── data/
+│   ├── historical_export.py
+│   └── historical_loader.py
 ├── engine/
 │   ├── phase6.py
 │   └── phase7.py
@@ -600,6 +610,23 @@ python app.py build-labels --feature-set hybrid_intraday --target-mode classific
 python app.py train-baseline --feature-set hybrid_intraday --target-mode classification_binary --model logistic_regression
 python app.py evaluate-baseline
 ```
+
+### Bootstrap Historical Training Data via IBKR Backfill
+
+```bash
+python app.py ibkr-head-timestamp --symbol SPY --what-to-show MIDPOINT
+python app.py ibkr-backfill --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
+python app.py ibkr-backfill-resume --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
+python app.py export-training-csv --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --output-path data/training/ibkr/SPY_1m_training.csv
+python app.py prepare-ibkr-training-data --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01 --output-path data/training/ibkr/SPY_1m_training.csv
+python app.py train --model-type baseline --data-path data/training/ibkr/SPY_1m_training.csv
+python app.py train --model-type deep --data-path data/training/ibkr/SPY_1m_training.csv
+```
+
+Notes:
+
+- `MIDPOINT` is the safest default if `TRADES` returns sparse or empty HMDS responses for your subscription/profile.
+- `train --model-type deep` now prints progress by epoch and batch, and uses CUDA automatically when `torch.cuda.is_available()` is true.
 
 ### Comparison and Main Phase 5 Runner
 
@@ -1221,8 +1248,181 @@ If readiness is `NOT_READY`, do not continue automated paper validation until th
 - Runtime management is local state management, not a full process supervisor.
 - Shadow-mode comparisons are only as good as the paper and realized-market data available for the same timestamps.
 - Governance checks are conservative but they do not replace manual operational review before a promotion.
+- The historical training bootstrap path is now IBKR-only. It depends on IBKR market data permissions and on IBKR pacing limits.
+- The training export enriches historical bars with synthetic `bid`, `ask`, `bid_size`, and `ask_size` so the current training loaders can work directly on the exported CSV.
 - No portfolio optimization or multi-position allocation logic is included yet.
 - Optional `xgboost` and `lightgbm` support still depends on those packages being installed.
+
+## IBKR Historical Backfill for Training
+
+The training bootstrap flow now supports IBKR only.
+
+- Polygon has been removed from the active training-data path.
+- IBKR remains the operational route for collection, paper execution, reconciliation, validation, and now historical bootstrap training data.
+- The backfill path is designed around `reqHeadTimestamp` and `reqHistoricalData`, with `reqHistoricalTicks` kept as a secondary research primitive inside the broker client.
+
+### Why This Exists
+
+- It keeps the project coherent around one broker/data source.
+- It avoids provider drift between training data and operational execution data.
+- It discovers the earliest historical point IBKR will return before requesting chunks.
+- It supports pacing-aware backfill, checkpointing, resume, and training-ready export.
+
+### Historical Backfill Strategy
+
+1. `ibkr-head-timestamp`
+- calls `reqHeadTimestamp`
+- discovers the earliest available historical timestamp for `symbol + whatToShow`
+
+2. `ibkr-backfill`
+- plans chunks backwards from now to the earliest available point
+- requests historical bars in bounded chunks, optimized for `1 min`
+- deduplicates and appends safely into a canonical parquet dataset
+
+3. `ibkr-backfill-resume`
+- reloads checkpoint state
+- skips completed chunks
+- continues without repeating finished work
+
+4. `export-training-csv`
+- reads the canonical backfill parquet
+- maps `close -> last`
+- adds synthetic `bid`, `ask`, `bid_size`, `ask_size`
+- writes CSV and optional Parquet/manifest for immediate training
+
+5. `prepare-ibkr-training-data`
+- combines head timestamp discovery, backfill, resume-aware progress, and training export
+
+### Pacing and Safety
+
+The backfill layer includes a local pacing guard that:
+
+- avoids repeating an identical request within 15 seconds
+- avoids 6 or more same-key requests inside 2 seconds
+- respects the 60 requests / 10 minutes ceiling
+- counts `BID_ASK` as double cost
+- uses conservative retry with backoff on IBKR historical errors
+
+### Canonical Historical Bar Output
+
+The backfill parquet is normalized to:
+
+- `timestamp`
+- `symbol`
+- `open`
+- `high`
+- `low`
+- `close`
+- `last`
+- `volume`
+- `count`
+- `wap`
+- `source`
+- `provider`
+- `bar_size`
+- `what_to_show`
+- `collected_at`
+
+Rules:
+
+- `last = close` if no better field exists
+- `provider = ibkr`
+- `source = ibkr_historical_backfill`
+- timestamps are written in UTC
+
+### Training Export
+
+The training CSV export keeps the historical bar fields and adds:
+
+- `bid`
+- `ask`
+- `bid_size`
+- `ask_size`
+
+These four are synthetic and exist only to make the current training loader immediately usable on historical bars.
+
+### Output Layout
+
+By default:
+
+- raw deduplicated parquet: `data/raw/ibkr_backfill/<SYMBOL>/<WHAT_TO_SHOW>/<BAR_SIZE>/bars.parquet`
+- checkpoint state: `data/processed/ibkr_backfill_state/*.state.json`
+- manifest: next to the raw parquet
+- training export: `data/training/ibkr/`
+
+### Commands
+
+Discover earliest history:
+
+```bash
+python app.py ibkr-head-timestamp --symbol SPY --what-to-show MIDPOINT
+```
+
+Run backfill:
+
+```bash
+python app.py ibkr-backfill --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
+```
+
+Resume:
+
+```bash
+python app.py ibkr-backfill-resume --symbol SPY --what-to-show MIDPOINT --bar-size "1 min" --use-rth true --start-date 2025-01-01
+```
+
+Status:
+
+```bash
+python app.py ibkr-backfill-status --symbol SPY --what-to-show MIDPOINT --bar-size "1 min"
+```
+
+Export training CSV:
+
+```bash
+python app.py export-training-csv \
+  --symbol SPY \
+  --bar-size "1 min" \
+  --what-to-show MIDPOINT \
+  --output-path data/training/ibkr/SPY_1m_training.csv
+```
+
+Main convenience command:
+
+```bash
+python app.py prepare-ibkr-training-data \
+  --symbol SPY \
+  --what-to-show MIDPOINT \
+  --bar-size "1 min" \
+  --use-rth true \
+  --start-date 2025-01-01 \
+  --output-path data/training/ibkr/SPY_1m_training.csv
+```
+
+### Training Immediately After Preparation
+
+```bash
+python app.py prepare-ibkr-training-data \
+  --symbol SPY \
+  --what-to-show MIDPOINT \
+  --bar-size "1 min" \
+  --use-rth true \
+  --start-date 2025-01-01 \
+  --output-path data/training/ibkr/SPY_1m_training.csv
+
+python app.py train --model-type baseline --data-path data/training/ibkr/SPY_1m_training.csv
+```
+
+Optional deep model:
+
+```bash
+python app.py train --model-type deep --data-path data/training/ibkr/SPY_1m_training.csv
+```
+
+The deep trainer now:
+
+- prints epoch progress and batch checkpoints to the terminal
+- prints loss during training plus epoch-level metrics
+- uses GPU automatically when CUDA is available in the active virtual environment
 
 ## Next Phase
 

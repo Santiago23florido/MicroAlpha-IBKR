@@ -45,7 +45,7 @@ def train_baseline_model(
         [
             ("imputer", SimpleImputer(strategy="constant", fill_value=0.0)),
             ("scaler", StandardScaler()),
-            ("classifier", LogisticRegression(max_iter=500, multi_class="auto")),
+            ("classifier", LogisticRegression(max_iter=500)),
         ]
     )
     regressor = Pipeline(

@@ -1,10 +1,48 @@
 {
   "active": {
     "baseline": null,
-    "deep": null
+    "deep": "deep-20260420T233856-b4b83161"
   },
   "baseline": [],
-  "deep": [],
+  "deep": [
+    {
+      "artifact_id": "deep-20260420T233856-b4b83161",
+      "artifact_path": "/home/santiago/ibkr_invest/data/models/artifacts/deep/deep-20260420T233856-b4b83161.pt",
+      "feature_set": [
+        "spread_bps",
+        "mid_price",
+        "microprice",
+        "depth_imbalance",
+        "ofi_proxy",
+        "multi_level_ofi",
+        "return_1_bps",
+        "return_3_bps",
+        "rolling_volatility_5",
+        "recent_volume_imbalance",
+        "orb_range_width_bps",
+        "price_vs_orb_high_bps",
+        "price_vs_orb_low_bps",
+        "price_vs_orb_mid_bps",
+        "breakout_distance_bps",
+        "is_primary_session",
+        "is_secondary_session",
+        "estimated_cost_bps"
+      ],
+      "metadata_path": "/home/santiago/ibkr_invest/data/models/artifacts/deep/deep-20260420T233856-b4b83161.metadata.json",
+      "metrics": {
+        "accuracy": 0.3909230951534542,
+        "return_mae_bps": 5.068891045614437
+      },
+      "model_name": "deep_lob_lite",
+      "model_type": "deep",
+      "registered_at": "2026-04-20T23:38:56.602253+00:00",
+      "target_definition": {
+        "classification_threshold_bps": 1.25,
+        "horizon_minutes": 3,
+        "sequence_length": 16
+      }
+    }
+  ],
   "phase5_runs": [
     {
       "artifact_dir": "/home/santiago/ibkr_invest/data/models/run_20260418T191033_logistic_regression_hybrid_intraday_classification_binary_d3473e6c",

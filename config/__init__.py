@@ -71,6 +71,7 @@ from config.phase12_14 import (
     load_phase12_14_config,
     resolve_runtime_profile,
 )
+from config.ibkr_history import IBKRHistoricalConfig, load_ibkr_historical_config
 
 __all__ = [
     "BrokerSettings",
@@ -113,6 +114,7 @@ __all__ = [
     "SchedulerIntervalConfig",
     "ServicePathConfig",
     "PathSettings",
+    "IBKRHistoricalConfig",
     "RiskSettings",
     "RiskEngineConfig",
     "SessionSettings",
@@ -126,6 +128,7 @@ __all__ = [
     "load_active_model_selection",
     "load_phase10_11_config",
     "load_phase12_14_config",
+    "load_ibkr_historical_config",
     "load_phase6_config",
     "load_phase7_config",
     "load_phase8_config",

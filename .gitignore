@@ -23,6 +23,8 @@ data/processed/runtime/*
 !data/processed/runtime/.gitkeep
 data/runtime/*
 !data/runtime/.gitkeep
+data/training/*
+!data/training/.gitkeep
 data/features/*
 !data/features/.gitkeep
 data/meta/*
@@ -36,6 +38,12 @@ data/models/*
 data/models/artifacts/*
 !data/models/artifacts/.gitkeep
 !data/models/artifacts/registry.json
+data/models/artifacts/baseline/*.joblib
+data/models/artifacts/baseline/*.metadata.json
+data/models/artifacts/deep/*.pt
+data/models/artifacts/deep/*.metadata.json
+data/models/releases/*.json
+data/models/releases/*.csv
 data/logs/*
 !data/logs/.gitkeep
 data/reports/*
@@ -67,6 +75,9 @@ imports/from_pc2/logs/*
 exports/
 dist/
 build/
+*.db
+*.sqlite
+*.sqlite3
 .DS_Store
 Thumbs.db
 .idea/
