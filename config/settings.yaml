@@ -67,6 +67,13 @@ defaults:
     baseline_weight: 0.4
     deep_weight: 0.6
     sequence_length: 16
+    dataset_type: bar_bootstrap
+    lob_sequence_length: 100
+    lob_depth_levels: 10
+    lob_horizon_events: 10
+    lob_stationary_threshold_bps: 2.0
+    lob_train_batch_size: 32
+    lob_eval_batch_size: 64
   ui:
     host: 127.0.0.1
     port: 8501
@@ -79,6 +86,21 @@ defaults:
     reconnect_delay_seconds: 10.0
     max_reconnect_attempts: 5
     health_log_interval_seconds: 60.0
+  lob_capture:
+    enabled: false
+    symbols: [SPY]
+    depth_levels: 10
+    flush_interval_seconds: 15.0
+    batch_size: 250
+    output_root: data/raw/ibkr_lob
+    state_root: data/processed/ibkr_lob_state
+    session_root: data/processed/ibkr_lob_sessions
+    dataset_root: data/processed/lob_datasets
+    report_root: data/reports/lob
+    rth_only: true
+    reconnect_delay_seconds: 10.0
+    max_reconnect_attempts: 5
+    startup_wait_seconds: 5.0
   feature_pipeline:
     gap_threshold_seconds: 120
     max_abs_spread_bps: 250.0
@@ -117,6 +139,10 @@ environments:
       poll_interval_seconds: 10.0
       flush_interval_seconds: 30.0
       batch_size: 20
+    lob_capture:
+      enabled: false
+      flush_interval_seconds: 15.0
+      batch_size: 250
     feature_pipeline:
       gap_threshold_seconds: 180
       rolling_short_window: 5
@@ -138,6 +164,10 @@ environments:
       poll_interval_seconds: 5.0
       flush_interval_seconds: 20.0
       batch_size: 50
+    lob_capture:
+      enabled: false
+      flush_interval_seconds: 10.0
+      batch_size: 500
     feature_pipeline:
       gap_threshold_seconds: 120
       rolling_short_window: 5

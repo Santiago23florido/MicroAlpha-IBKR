@@ -49,6 +49,11 @@ class InferenceEngine:
         if record is None:
             return _rejected_prediction("deep", "No active deep model is configured.")
         payload = _load_torch_artifact(record["artifact_path"])
+        if payload.get("dataset_type") == "ibkr_lob_depth" or payload.get("model_family") == "deep_lob_reference_like":
+            return _rejected_prediction(
+                "deep",
+                "Active deep model expects live LOB multilevel sequences and cannot score feature snapshots.",
+            )
         feature_columns = payload["feature_columns"]
         sequence_length = int(payload["sequence_length"])
         if len(sequence) < sequence_length:

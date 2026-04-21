@@ -50,6 +50,12 @@ from ingestion.ibkr_historical_backfill import (
     prepare_ibkr_training_data,
 )
 from ingestion.ibkr_client import build_collector_ib_client
+from ingestion.lob_capture import (
+    lob_capture_status,
+    run_lob_capture_loop,
+    start_lob_capture,
+    stop_lob_capture,
+)
 from labels.labeling import build_labels
 from models.experiments import (
     compare_model_variants,
@@ -58,7 +64,7 @@ from models.experiments import (
     train_baseline_variant,
 )
 from models.train_baseline import train_baseline_model
-from models.train_deep import train_deep_model
+from models.train_deep import evaluate_deep_daily, train_deep_model
 from monitoring.data_quality import validate_imports
 from monitoring.healthcheck import build_healthcheck_report
 from monitoring.sync import sync_data_artifacts
@@ -220,6 +226,44 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_ibkr_training_parser.add_argument("--use-rth", choices=["true", "false"], help="Whether to restrict the request to regular trading hours.")
     prepare_ibkr_training_parser.add_argument("--start-date", help="Optional lower bound in YYYY-MM-DD. Example: 2025-01-01")
     prepare_ibkr_training_parser.add_argument("--output-path", required=True, help="Training CSV output path.")
+
+    start_lob_capture_parser = subparsers.add_parser(
+        "start-lob-capture",
+        help="Start a background IBKR Level II capture process that appends multilevel LOB chunks to parquet.",
+    )
+    start_lob_capture_parser.add_argument("--symbol", required=True, help="Ticker symbol to capture.")
+    start_lob_capture_parser.add_argument("--levels", type=int, default=10, help="Requested market depth levels.")
+    start_lob_capture_parser.add_argument("--rth", choices=["true", "false"], help="Restrict persistence to RTH only.")
+
+    stop_lob_capture_parser = subparsers.add_parser(
+        "stop-lob-capture",
+        help="Stop the background IBKR Level II capture process for a symbol.",
+    )
+    stop_lob_capture_parser.add_argument("--symbol", required=True, help="Ticker symbol to stop.")
+
+    lob_capture_status_parser = subparsers.add_parser(
+        "lob-capture-status",
+        help="Show current LOB capture state, PID, session, and persisted row counters.",
+    )
+    lob_capture_status_parser.add_argument("--symbol", required=True, help="Ticker symbol to inspect.")
+
+    build_lob_dataset_parser = subparsers.add_parser(
+        "build-lob-dataset",
+        help="Build an event-based multilevel LOB dataset from raw capture chunks and emit labels paper-style.",
+    )
+    build_lob_dataset_parser.add_argument("--symbol", required=True, help="Ticker symbol to build.")
+    build_lob_dataset_parser.add_argument("--from-date", required=True, help="Lower session-date bound in YYYY-MM-DD.")
+    build_lob_dataset_parser.add_argument("--to-date", help="Upper session-date bound in YYYY-MM-DD.")
+    build_lob_dataset_parser.add_argument("--horizon-events", type=int, help="Label horizon in book events.")
+    build_lob_dataset_parser.add_argument("--output-path", help="Optional explicit parquet output path.")
+
+    evaluate_deep_daily_parser = subparsers.add_parser(
+        "evaluate-deep-daily",
+        help="Run walk-forward daily evaluation for the DeepLOB-like model on captured IBKR LOB data.",
+    )
+    evaluate_deep_daily_parser.add_argument("--symbol", required=True, help="Ticker symbol to evaluate.")
+    evaluate_deep_daily_parser.add_argument("--from-date", required=True, help="Lower session-date bound in YYYY-MM-DD.")
+    evaluate_deep_daily_parser.add_argument("--epochs", type=int, default=2, help="Epochs per walk-forward retrain.")
 
     train_baseline_parser = subparsers.add_parser(
         "train-baseline",
@@ -575,6 +619,15 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--epochs", type=int, default=6, help="Only used for deep training.")
     train_parser.add_argument("--no-set-active", action="store_true", help="Do not set the new artifact as active.")
 
+    lob_runner_parser = subparsers.add_parser(
+        "_lob-capture-runner",
+        help=argparse.SUPPRESS,
+    )
+    lob_runner_parser.add_argument("--symbol", required=True)
+    lob_runner_parser.add_argument("--levels", type=int, required=True)
+    lob_runner_parser.add_argument("--session-id", required=True)
+    lob_runner_parser.add_argument("--rth", choices=["true", "false"], required=True)
+
     backtest_parser = subparsers.add_parser("backtest", help="Validate backtest inputs and dataset plumbing.")
     backtest_parser.add_argument("--data-path", help="CSV or Parquet dataset for research mode.")
     backtest_parser.add_argument("--symbol", help="Override the configured symbol.")
@@ -851,6 +904,51 @@ def main(argv: Sequence[str] | None = None) -> int:
                     use_rth=_parse_cli_bool(args.use_rth),
                     output_path=args.output_path,
                     start_date=args.start_date,
+                )
+            )
+            return 0
+
+        if args.command == "start-lob-capture":
+            print_result(
+                start_lob_capture(
+                    settings,
+                    symbol=args.symbol,
+                    levels=args.levels,
+                    rth_only=_parse_cli_bool(args.rth),
+                )
+            )
+            return 0
+
+        if args.command == "stop-lob-capture":
+            print_result(stop_lob_capture(settings, symbol=args.symbol))
+            return 0
+
+        if args.command == "lob-capture-status":
+            print_result(lob_capture_status(settings, symbol=args.symbol))
+            return 0
+
+        if args.command == "build-lob-dataset":
+            from data.lob_dataset import build_lob_dataset
+
+            print_result(
+                build_lob_dataset(
+                    settings,
+                    symbol=args.symbol,
+                    from_date=args.from_date,
+                    to_date=args.to_date,
+                    horizon_events=args.horizon_events,
+                    output_path=args.output_path,
+                )
+            )
+            return 0
+
+        if args.command == "evaluate-deep-daily":
+            print_result(
+                evaluate_deep_daily(
+                    settings,
+                    symbol=args.symbol,
+                    from_date=args.from_date,
+                    epochs=args.epochs,
                 )
             )
             return 0
@@ -1332,6 +1430,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     },
                     "models": runtime.model_registry.list_models(args.model_type),
                 }
+            )
+            return 0
+
+        if args.command == "_lob-capture-runner":
+            print_result(
+                run_lob_capture_loop(
+                    settings,
+                    symbol=args.symbol,
+                    levels=args.levels,
+                    session_id=args.session_id,
+                    rth_only=_parse_cli_bool(args.rth),
+                )
             )
             return 0
     except IBClientError as exc:

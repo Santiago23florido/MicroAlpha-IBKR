@@ -62,4 +62,9 @@ def load_historical_dataset(settings: Settings, path: str | None = None) -> pd.D
         frame = pd.read_parquet(dataset_path)
     else:
         frame = pd.read_csv(dataset_path)
+    if (
+        ("dataset_type" in frame.columns and not frame.empty and str(frame["dataset_type"].iloc[0]) == "ibkr_lob_depth")
+        or {"bid_px_1", "ask_px_1", "bid_sz_1", "ask_sz_1"}.issubset(frame.columns)
+    ):
+        return frame
     return normalize_historical_frame(frame)

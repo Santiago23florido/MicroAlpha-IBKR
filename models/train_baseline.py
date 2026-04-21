@@ -45,7 +45,7 @@ def train_baseline_model(
         [
             ("imputer", SimpleImputer(strategy="constant", fill_value=0.0)),
             ("scaler", StandardScaler()),
-            ("classifier", LogisticRegression(max_iter=500)),
+            ("classifier", LogisticRegression(max_iter=500, class_weight="balanced")),
         ]
     )
     regressor = Pipeline(
@@ -77,9 +77,10 @@ def train_baseline_model(
         "regressor": regressor,
         "feature_columns": feature_columns,
         "class_labels": list(map(int, classifier.named_steps["classifier"].classes_)),
-        "target_horizon_minutes": settings.models.target_horizon_minutes,
+        "target_horizon_minutes": prepared.target_horizon_minutes,
         "model_name": model_name,
         "class_threshold_bps": prepared.class_threshold_bps,
+        "training_profile": prepared.training_profile,
     }
     joblib.dump(payload, artifact_path)
 
@@ -90,8 +91,9 @@ def train_baseline_model(
         "data_source": data_path or "data/sample/spy_microstructure_sample.csv",
         "feature_set": feature_columns,
         "target_definition": {
-            "horizon_minutes": settings.models.target_horizon_minutes,
+            "horizon_minutes": prepared.target_horizon_minutes,
             "classification_threshold_bps": prepared.class_threshold_bps,
+            "training_profile": prepared.training_profile,
         },
         "metrics": metrics,
         "artifact_path": str(artifact_path),

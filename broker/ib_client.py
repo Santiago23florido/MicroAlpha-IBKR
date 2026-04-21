@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
 from collections import defaultdict
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
@@ -38,6 +40,7 @@ ACCOUNT_SUMMARY_TAGS = ",".join(
 
 INFO_ERROR_CODES = {2104, 2106, 2107, 2108, 2158}
 NON_FATAL_REQUEST_CODES = {10167, 2176}
+MARKET_DEPTH_RESET_CODES = {317}
 TERMINAL_ORDER_STATUSES = {"Filled", "Cancelled", "ApiCancelled", "Inactive"}
 TICK_PRICE_FIELDS = {
     1: "bid",
@@ -121,6 +124,7 @@ class _IBGatewayApp(EWrapper, EClient):
         self.historical_data_events: dict[int, threading.Event] = {}
         self.head_timestamp_events: dict[int, threading.Event] = {}
         self.historical_ticks_events: dict[int, threading.Event] = {}
+        self.market_depth_queues: dict[int, queue.Queue[dict[str, Any]]] = {}
         self.order_events: dict[int, threading.Event] = {}
         self.order_terminal_events: dict[int, threading.Event] = {}
         self.snapshot_data: dict[int, dict[str, Any]] = {}
@@ -305,6 +309,58 @@ class _IBGatewayApp(EWrapper, EClient):
         event = self.historical_ticks_events.get(reqId)
         if event is not None:
             event.set()
+
+    def updateMktDepth(  # noqa: N802
+        self,
+        reqId: int,
+        position: int,
+        operation: int,
+        side: int,
+        price: float,
+        size: Any,
+    ) -> None:
+        self._emit_market_depth_event(
+            reqId,
+            {
+                "event_type": "depth_update",
+                "timestamp_utc": _utc_now_iso(),
+                "position": position,
+                "operation": operation,
+                "side": side,
+                "price": float(price),
+                "size": float(size),
+                "market_maker": None,
+                "is_smart_depth": False,
+                "source": "updateMktDepth",
+            },
+        )
+
+    def updateMktDepthL2(  # noqa: N802
+        self,
+        reqId: int,
+        position: int,
+        marketMaker: str,
+        operation: int,
+        side: int,
+        price: float,
+        size: Any,
+        isSmartDepth: bool,
+    ) -> None:
+        self._emit_market_depth_event(
+            reqId,
+            {
+                "event_type": "depth_update",
+                "timestamp_utc": _utc_now_iso(),
+                "position": position,
+                "operation": operation,
+                "side": side,
+                "price": float(price),
+                "size": float(size),
+                "market_maker": marketMaker or None,
+                "is_smart_depth": bool(isSmartDepth),
+                "source": "updateMktDepthL2",
+            },
+        )
 
     def openOrder(  # noqa: N802
         self,
@@ -503,6 +559,18 @@ class _IBGatewayApp(EWrapper, EClient):
     ) -> None:
         message = f"IB error {errorCode} (reqId={reqId}): {errorString}"
 
+        if errorCode in MARKET_DEPTH_RESET_CODES and reqId in self.market_depth_queues:
+            self.logger.warning(message)
+            self._emit_market_depth_event(
+                reqId,
+                {
+                    "event_type": "depth_reset",
+                    "timestamp_utc": _utc_now_iso(),
+                    "message": message,
+                },
+            )
+            return
+
         if errorCode in INFO_ERROR_CODES:
             self.logger.info(message)
             return
@@ -563,6 +631,21 @@ class _IBGatewayApp(EWrapper, EClient):
     def connectionClosed(self) -> None:  # noqa: N802
         self.logger.warning("IB connection closed.")
         self.connection_ready.clear()
+        for req_id in list(self.market_depth_queues):
+            self._emit_market_depth_event(
+                req_id,
+                {
+                    "event_type": "connection_closed",
+                    "timestamp_utc": _utc_now_iso(),
+                    "message": "IB connection closed.",
+                },
+            )
+
+    def _emit_market_depth_event(self, req_id: int, payload: dict[str, Any]) -> None:
+        depth_queue = self.market_depth_queues.get(req_id)
+        if depth_queue is None:
+            return
+        depth_queue.put(payload)
 
     def _copy_order_status_locked(self, order_id: int) -> dict[str, Any]:
         payload = dict(self.order_statuses.get(order_id, {}))
@@ -974,6 +1057,67 @@ class IBClient:
                 f"Historical ticks request for {symbol.upper()} failed. " + " | ".join(errors)
             )
         return rows
+
+    def subscribe_market_depth(
+        self,
+        *,
+        symbol: str,
+        num_rows: int = 10,
+        exchange: str | None = None,
+        currency: str | None = None,
+        is_smart_depth: bool = True,
+    ) -> int:
+        self._ensure_connected()
+        req_id = self._next_request_id()
+        self._app.market_depth_queues[req_id] = queue.Queue()
+        self._app.request_errors.pop(req_id, None)
+        self._app.request_notices.pop(req_id, None)
+        contract = self._build_contract(symbol, exchange=exchange, currency=currency)
+        self.logger.info(
+            "Subscribing to market depth for %s with %s levels (smart_depth=%s).",
+            symbol.upper(),
+            num_rows,
+            is_smart_depth,
+        )
+        self._app.reqMktDepth(req_id, contract, num_rows, is_smart_depth, [])
+        return req_id
+
+    def consume_market_depth_events(
+        self,
+        req_id: int,
+        *,
+        timeout: float = 1.0,
+        max_events: int = 500,
+    ) -> list[dict[str, Any]]:
+        depth_queue = self._app.market_depth_queues.get(req_id)
+        if depth_queue is None:
+            raise IBClientError(f"No market depth subscription found for request id {req_id}.")
+
+        request_errors = self._app.request_errors.get(req_id, [])
+        if request_errors and depth_queue.empty():
+            raise IBClientError(" | ".join(request_errors))
+
+        rows: list[dict[str, Any]] = []
+        try:
+            event = depth_queue.get(timeout=timeout)
+            rows.append(event)
+        except queue.Empty:
+            return rows
+
+        while len(rows) < max_events:
+            try:
+                rows.append(depth_queue.get_nowait())
+            except queue.Empty:
+                break
+        return rows
+
+    def cancel_market_depth(self, req_id: int) -> None:
+        if self._app.isConnected():
+            with suppress(Exception):
+                self._app.cancelMktDepth(req_id, False)
+        self._app.market_depth_queues.pop(req_id, None)
+        self._app.request_errors.pop(req_id, None)
+        self._app.request_notices.pop(req_id, None)
 
     @staticmethod
     def _snapshot_has_price_fields(snapshot: dict[str, Any]) -> bool:

@@ -1424,6 +1424,103 @@ The deep trainer now:
 - prints loss during training plus epoch-level metrics
 - uses GPU automatically when CUDA is available in the active virtual environment
 
+## Live IBKR LOB Capture and DeepLOB-like Training
+
+This repository now supports a separate **live Level II capture** pipeline for building a multilevel LOB dataset from IBKR and training a **DeepLOB-like** model that is closer to the research reference than the bar-based bootstrap route.
+
+Important constraints:
+
+- You need the correct **IBKR Level II / market depth subscription** for the symbol through the API.
+- The capture is **append-only**. Starting a new session adds new chunk files and updates manifests/state; it does not reset prior days.
+- The first cut is designed around **SPY**, **10 depth levels**, and **RTH only**.
+- The model target follows the paper-style idea of **future mid-price movement over event horizons** rather than the bar-based net-return target.
+
+### Start Live LOB Capture
+
+```bash
+python app.py start-lob-capture --symbol SPY --levels 10 --rth true
+```
+
+### Stop Live LOB Capture
+
+```bash
+python app.py stop-lob-capture --symbol SPY
+```
+
+### Check Capture Status
+
+```bash
+python app.py lob-capture-status --symbol SPY
+```
+
+### Build a Training Dataset from Captured Chunks
+
+```bash
+python app.py build-lob-dataset \
+  --symbol SPY \
+  --from-date 2026-04-21 \
+  --to-date 2026-04-25 \
+  --horizon-events 10
+```
+
+This produces an event-based parquet dataset under `data/processed/lob_datasets/` plus:
+
+- a manifest JSON
+- a daily summary JSON
+- labels based on future mid-price movement
+
+### Train the DeepLOB-like Model on GPU
+
+```bash
+python app.py train --model-type deep --data-path data/processed/lob_datasets/SPY/SPY_2026-04-21_2026-04-25_k10.parquet
+```
+
+When the dataset type is `ibkr_lob_depth`, the `deep` trainer switches to the new multilevel route:
+
+- sequence length defaults to `100`
+- depth defaults to `10` levels
+- input shape is `[sequence_length, 4 * depth_levels]`
+- training uses CUDA automatically when available
+- saved metadata records `dataset_type=ibkr_lob_depth`, depth, horizon, normalization, and daily/global metrics
+
+### Daily Walk-Forward Evaluation
+
+```bash
+python app.py evaluate-deep-daily --symbol SPY --from-date 2026-04-21 --epochs 2
+```
+
+This retrains day by day on the accumulated prior sessions and evaluates only the next session, emitting:
+
+- daily accuracy
+- daily macro F1
+- daily return MAE in bps
+- a JSON report and CSV under `data/reports/lob/`
+
+### Storage Layout
+
+Raw LOB capture:
+
+- `data/raw/ibkr_lob/<SYMBOL>/<YYYY-MM-DD>/chunks/*.parquet`
+- `data/raw/ibkr_lob/<SYMBOL>/<YYYY-MM-DD>/manifest.json`
+
+Capture control and state:
+
+- `data/processed/ibkr_lob_state/<SYMBOL>.json`
+- `data/processed/ibkr_lob_sessions/<session_id>.json`
+
+Processed training datasets:
+
+- `data/processed/lob_datasets/<SYMBOL>/*.parquet`
+- matching `.manifest.json` and `.daily.json`
+
+### Current Limitation vs the Paper
+
+This is the correct direction for a DeepLOB-style model, but it is still not identical to the paper setup:
+
+- the paper used a dedicated historical LOB dataset already captured from the venue
+- here you build the dataset **forward in time** from IBKR API depth updates
+- model quality will depend heavily on the actual depth feed quality, observed levels, and continuity of your live capture sessions
+
 ## Next Phase
 
 The next phase should build on this by adding:
