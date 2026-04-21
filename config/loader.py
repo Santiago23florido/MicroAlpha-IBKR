@@ -164,6 +164,13 @@ class ModelSettings:
     artifacts_dir: str
     registry_path: str
     sequence_length: int
+    dataset_type: str = "bar_bootstrap"
+    lob_sequence_length: int = 100
+    lob_depth_levels: int = 10
+    lob_horizon_events: int = 10
+    lob_stationary_threshold_bps: float = 2.0
+    lob_train_batch_size: int = 32
+    lob_eval_batch_size: int = 64
 
 
 @dataclass(frozen=True)
@@ -190,6 +197,48 @@ class CollectorSettings:
     reconnect_delay_seconds: float = 10.0
     max_reconnect_attempts: int = 5
     health_log_interval_seconds: float = 60.0
+
+
+@dataclass(frozen=True)
+class LOBCaptureSettings:
+    enabled: bool = False
+    symbols: tuple[str, ...] = ("SPY",)
+    depth_levels: int = 10
+    flush_interval_seconds: float = 15.0
+    batch_size: int = 250
+    output_root: str = "data/raw/ibkr_lob"
+    state_root: str = "data/processed/ibkr_lob_state"
+    session_root: str = "data/processed/ibkr_lob_sessions"
+    dataset_root: str = "data/processed/lob_datasets"
+    report_root: str = "data/reports/lob"
+    rth_only: bool = True
+    reconnect_delay_seconds: float = 10.0
+    max_reconnect_attempts: int = 5
+    startup_wait_seconds: float = 5.0
+
+
+@dataclass(frozen=True)
+class KrakenLOBSettings:
+    enabled: bool = False
+    symbol: str = "BTC/EUR"
+    depth_levels: int = 10
+    flush_interval_seconds: float = 15.0
+    batch_size: int = 250
+    output_root: str = "data/raw/kraken_lob"
+    state_root: str = "data/processed/kraken_lob_state"
+    session_root: str = "data/processed/kraken_lob_sessions"
+    websocket_url: str = "wss://ws.kraken.com/v2"
+    reconnect_delay_seconds: float = 10.0
+    max_reconnect_attempts: int = 5
+    startup_wait_seconds: float = 5.0
+    paper_fee_bps: float = 26.0
+    paper_initial_cash_eur: float = 10000.0
+    paper_initial_cash_mode: str = "dynamic_minimum"
+    paper_min_cash_buffer_bps: float = 1000.0
+    paper_position_fraction: float = 0.25
+    paper_slippage_bps: float = 2.0
+    paper_ui_refresh_seconds: float = 2.0
+    paper_ui_port: int = 8502
 
 
 @dataclass(frozen=True)
@@ -271,6 +320,8 @@ class Settings:
     storage: StorageSettings
     ui: UISettings
     collector: CollectorSettings = field(default_factory=CollectorSettings)
+    lob_capture: LOBCaptureSettings = field(default_factory=LOBCaptureSettings)
+    kraken_lob: KrakenLOBSettings = field(default_factory=KrakenLOBSettings)
     feature_pipeline: FeaturePipelineSettings = field(default_factory=FeaturePipelineSettings)
     lan_sync: LanSyncSettings = field(default_factory=LanSyncSettings)
     paths: PathSettings = field(default_factory=PathSettings)
@@ -584,6 +635,8 @@ def load_settings(
     model_defaults = merged_settings.get("models", {})
     ui_defaults = merged_settings.get("ui", {})
     collector_defaults = merged_settings.get("collector", {})
+    lob_capture_defaults = merged_settings.get("lob_capture", {})
+    kraken_lob_defaults = merged_settings.get("kraken_lob", {})
     feature_pipeline_defaults = merged_settings.get("feature_pipeline", {})
     lan_sync_defaults = merged_settings.get("lan_sync", {})
 
@@ -737,6 +790,40 @@ def load_settings(
                 "MODEL_SEQUENCE_LENGTH",
                 int(model_defaults.get("sequence_length", 16)),
             ),
+            dataset_type=runtime_env.get(
+                "MODEL_DATASET_TYPE",
+                str(model_defaults.get("dataset_type", "bar_bootstrap")),
+            ),
+            lob_sequence_length=_parse_int(
+                runtime_env,
+                "LOB_SEQUENCE_LENGTH",
+                int(model_defaults.get("lob_sequence_length", 100)),
+            ),
+            lob_depth_levels=_parse_int(
+                runtime_env,
+                "LOB_DEPTH_LEVELS",
+                int(model_defaults.get("lob_depth_levels", 10)),
+            ),
+            lob_horizon_events=_parse_int(
+                runtime_env,
+                "LOB_HORIZON_EVENTS",
+                int(model_defaults.get("lob_horizon_events", 10)),
+            ),
+            lob_stationary_threshold_bps=_parse_float(
+                runtime_env,
+                "LOB_STATIONARY_THRESHOLD_BPS",
+                float(model_defaults.get("lob_stationary_threshold_bps", 2.0)),
+            ),
+            lob_train_batch_size=_parse_int(
+                runtime_env,
+                "LOB_TRAIN_BATCH_SIZE",
+                int(model_defaults.get("lob_train_batch_size", 32)),
+            ),
+            lob_eval_batch_size=_parse_int(
+                runtime_env,
+                "LOB_EVAL_BATCH_SIZE",
+                int(model_defaults.get("lob_eval_batch_size", 64)),
+            ),
         ),
         storage=StorageSettings(
             log_level=runtime_env.get("LOG_LEVEL", str(merged_settings.get("log_level", "INFO"))).upper(),
@@ -780,6 +867,193 @@ def load_settings(
                 runtime_env,
                 "COLLECTOR_HEALTH_LOG_INTERVAL_SECONDS",
                 float(collector_defaults.get("health_log_interval_seconds", 60.0)),
+            ),
+        ),
+        lob_capture=LOBCaptureSettings(
+            enabled=_parse_bool(
+                runtime_env,
+                "LOB_CAPTURE_ENABLED",
+                bool(lob_capture_defaults.get("enabled", False)),
+            ),
+            symbols=_parse_csv(
+                runtime_env,
+                "LOB_CAPTURE_SYMBOLS",
+                _normalize_symbols(tuple(lob_capture_defaults.get("symbols", supported_symbols))),
+            ),
+            depth_levels=_parse_int(
+                runtime_env,
+                "LOB_CAPTURE_DEPTH_LEVELS",
+                int(lob_capture_defaults.get("depth_levels", 10)),
+            ),
+            flush_interval_seconds=_parse_float(
+                runtime_env,
+                "LOB_CAPTURE_FLUSH_INTERVAL_SECONDS",
+                float(lob_capture_defaults.get("flush_interval_seconds", 15.0)),
+            ),
+            batch_size=_parse_int(
+                runtime_env,
+                "LOB_CAPTURE_BATCH_SIZE",
+                int(lob_capture_defaults.get("batch_size", 250)),
+            ),
+            output_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "LOB_CAPTURE_OUTPUT_ROOT",
+                    str(lob_capture_defaults.get("output_root", "data/raw/ibkr_lob")),
+                ),
+            ),
+            state_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "LOB_CAPTURE_STATE_ROOT",
+                    str(lob_capture_defaults.get("state_root", "data/processed/ibkr_lob_state")),
+                ),
+            ),
+            session_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "LOB_CAPTURE_SESSION_ROOT",
+                    str(lob_capture_defaults.get("session_root", "data/processed/ibkr_lob_sessions")),
+                ),
+            ),
+            dataset_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "LOB_CAPTURE_DATASET_ROOT",
+                    str(lob_capture_defaults.get("dataset_root", "data/processed/lob_datasets")),
+                ),
+            ),
+            report_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "LOB_CAPTURE_REPORT_ROOT",
+                    str(lob_capture_defaults.get("report_root", "data/reports/lob")),
+                ),
+            ),
+            rth_only=_parse_bool(
+                runtime_env,
+                "LOB_CAPTURE_RTH_ONLY",
+                bool(lob_capture_defaults.get("rth_only", True)),
+            ),
+            reconnect_delay_seconds=_parse_float(
+                runtime_env,
+                "LOB_CAPTURE_RECONNECT_DELAY_SECONDS",
+                float(lob_capture_defaults.get("reconnect_delay_seconds", 10.0)),
+            ),
+            max_reconnect_attempts=_parse_int(
+                runtime_env,
+                "LOB_CAPTURE_MAX_RECONNECT_ATTEMPTS",
+                int(lob_capture_defaults.get("max_reconnect_attempts", 5)),
+            ),
+            startup_wait_seconds=_parse_float(
+                runtime_env,
+                "LOB_CAPTURE_STARTUP_WAIT_SECONDS",
+                float(lob_capture_defaults.get("startup_wait_seconds", 5.0)),
+            ),
+        ),
+        kraken_lob=KrakenLOBSettings(
+            enabled=_parse_bool(
+                runtime_env,
+                "KRAKEN_LOB_ENABLED",
+                bool(kraken_lob_defaults.get("enabled", False)),
+            ),
+            symbol=runtime_env.get(
+                "KRAKEN_LOB_SYMBOL",
+                str(kraken_lob_defaults.get("symbol", "BTC/EUR")),
+            ).upper().replace("-", "/"),
+            depth_levels=_parse_int(
+                runtime_env,
+                "KRAKEN_LOB_DEPTH_LEVELS",
+                int(kraken_lob_defaults.get("depth_levels", 10)),
+            ),
+            flush_interval_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_LOB_FLUSH_INTERVAL_SECONDS",
+                float(kraken_lob_defaults.get("flush_interval_seconds", 15.0)),
+            ),
+            batch_size=_parse_int(
+                runtime_env,
+                "KRAKEN_LOB_BATCH_SIZE",
+                int(kraken_lob_defaults.get("batch_size", 250)),
+            ),
+            output_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "KRAKEN_LOB_OUTPUT_ROOT",
+                    str(kraken_lob_defaults.get("output_root", "data/raw/kraken_lob")),
+                ),
+            ),
+            state_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "KRAKEN_LOB_STATE_ROOT",
+                    str(kraken_lob_defaults.get("state_root", "data/processed/kraken_lob_state")),
+                ),
+            ),
+            session_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "KRAKEN_LOB_SESSION_ROOT",
+                    str(kraken_lob_defaults.get("session_root", "data/processed/kraken_lob_sessions")),
+                ),
+            ),
+            websocket_url=runtime_env.get(
+                "KRAKEN_LOB_WEBSOCKET_URL",
+                str(kraken_lob_defaults.get("websocket_url", "wss://ws.kraken.com/v2")),
+            ),
+            reconnect_delay_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_LOB_RECONNECT_DELAY_SECONDS",
+                float(kraken_lob_defaults.get("reconnect_delay_seconds", 10.0)),
+            ),
+            max_reconnect_attempts=_parse_int(
+                runtime_env,
+                "KRAKEN_LOB_MAX_RECONNECT_ATTEMPTS",
+                int(kraken_lob_defaults.get("max_reconnect_attempts", 5)),
+            ),
+            startup_wait_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_LOB_STARTUP_WAIT_SECONDS",
+                float(kraken_lob_defaults.get("startup_wait_seconds", 5.0)),
+            ),
+            paper_fee_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_FEE_BPS",
+                float(kraken_lob_defaults.get("paper_fee_bps", 26.0)),
+            ),
+            paper_initial_cash_eur=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_INITIAL_CASH_EUR",
+                float(kraken_lob_defaults.get("paper_initial_cash_eur", 10000.0)),
+            ),
+            paper_initial_cash_mode=runtime_env.get(
+                "KRAKEN_PAPER_INITIAL_CASH_MODE",
+                str(kraken_lob_defaults.get("paper_initial_cash_mode", "dynamic_minimum")),
+            ),
+            paper_min_cash_buffer_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_MIN_CASH_BUFFER_BPS",
+                float(kraken_lob_defaults.get("paper_min_cash_buffer_bps", 1000.0)),
+            ),
+            paper_position_fraction=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_POSITION_FRACTION",
+                float(kraken_lob_defaults.get("paper_position_fraction", 0.25)),
+            ),
+            paper_slippage_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_SLIPPAGE_BPS",
+                float(kraken_lob_defaults.get("paper_slippage_bps", 2.0)),
+            ),
+            paper_ui_refresh_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_UI_REFRESH_SECONDS",
+                float(kraken_lob_defaults.get("paper_ui_refresh_seconds", 2.0)),
+            ),
+            paper_ui_port=_parse_int(
+                runtime_env,
+                "KRAKEN_PAPER_UI_PORT",
+                int(kraken_lob_defaults.get("paper_ui_port", 8502)),
             ),
         ),
         feature_pipeline=FeaturePipelineSettings(
