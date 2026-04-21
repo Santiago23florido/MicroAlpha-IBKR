@@ -101,6 +101,22 @@ defaults:
     reconnect_delay_seconds: 10.0
     max_reconnect_attempts: 5
     startup_wait_seconds: 5.0
+  kraken_lob:
+    enabled: false
+    symbol: BTC/EUR
+    depth_levels: 10
+    flush_interval_seconds: 15.0
+    batch_size: 250
+    output_root: data/raw/kraken_lob
+    state_root: data/processed/kraken_lob_state
+    session_root: data/processed/kraken_lob_sessions
+    websocket_url: wss://ws.kraken.com/v2
+    reconnect_delay_seconds: 10.0
+    max_reconnect_attempts: 5
+    startup_wait_seconds: 5.0
+    paper_fee_bps: 26.0
+    paper_initial_cash_eur: 10000.0
+    paper_slippage_bps: 2.0
   feature_pipeline:
     gap_threshold_seconds: 120
     max_abs_spread_bps: 250.0
@@ -143,6 +159,10 @@ environments:
       enabled: false
       flush_interval_seconds: 15.0
       batch_size: 250
+    kraken_lob:
+      enabled: false
+      flush_interval_seconds: 15.0
+      batch_size: 250
     feature_pipeline:
       gap_threshold_seconds: 180
       rolling_short_window: 5
@@ -165,6 +185,10 @@ environments:
       flush_interval_seconds: 20.0
       batch_size: 50
     lob_capture:
+      enabled: false
+      flush_interval_seconds: 10.0
+      batch_size: 500
+    kraken_lob:
       enabled: false
       flush_interval_seconds: 10.0
       batch_size: 500

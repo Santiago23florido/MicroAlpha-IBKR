@@ -7,6 +7,8 @@ import pandas as pd
 
 from config import load_settings
 from data.lob_dataset import build_lob_dataset
+from execution.kraken_paper import run_kraken_paper_sim
+from ingestion.kraken_lob_client import KrakenLOBClient
 from ingestion.lob_capture import run_lob_capture_loop
 from ingestion.lob_reconstruction import LOBBookState, LOBDepthUpdate
 from models.train_deep import evaluate_deep_daily, train_deep_model
@@ -157,6 +159,110 @@ def test_evaluate_deep_daily_walk_forward(tmp_path: Path) -> None:
     assert Path(payload["report_path"]).exists()
 
 
+def test_kraken_client_builds_snapshot_and_updates_ordered_book() -> None:
+    client = KrakenLOBClient()
+    client._symbol = "BTC/EUR"
+    client._depth = 2
+    snapshot_rows = client._parse_message(
+        """
+        {
+          "channel": "book",
+          "type": "snapshot",
+          "data": [{
+            "symbol": "BTC/EUR",
+            "bids": [{"price": 100.0, "qty": 1.0}, {"price": 99.0, "qty": 2.0}],
+            "asks": [{"price": 101.0, "qty": 1.5}, {"price": 102.0, "qty": 2.5}],
+            "timestamp": "2026-04-21T10:00:00.000000Z",
+            "checksum": 123
+          }]
+        }
+        """
+    )
+    assert snapshot_rows[0]["provider"] == "kraken"
+    assert snapshot_rows[0]["bid_px_1"] == 100.0
+    assert snapshot_rows[0]["ask_px_1"] == 101.0
+
+    update_rows = client._parse_message(
+        """
+        {
+          "channel": "book",
+          "type": "update",
+          "data": [{
+            "symbol": "BTC/EUR",
+            "bids": [{"price": 101.0, "qty": 3.0}, {"price": 99.0, "qty": 0.0}],
+            "asks": [{"price": 101.0, "qty": 0.0}, {"price": 100.5, "qty": 4.0}],
+            "timestamp": "2026-04-21T10:00:01.000000Z"
+          }]
+        }
+        """
+    )
+    assert update_rows[0]["bid_px_1"] == 101.0
+    assert update_rows[0]["bid_sz_1"] == 3.0
+    assert update_rows[0]["ask_px_1"] == 100.5
+    assert update_rows[0]["observed_bid_levels"] == 2
+
+
+def test_kraken_lob_capture_dataset_training_and_paper_sim(tmp_path: Path) -> None:
+    settings = _build_temp_settings(tmp_path)
+    client = FakeDepthClient(
+        batches=[
+            [
+                _kraken_snapshot_event("BTC/EUR", "2026-04-21T10:00:00Z", index)
+                for index in range(8)
+            ],
+            [
+                _kraken_snapshot_event("BTC/EUR", "2026-04-22T10:00:00Z", index)
+                for index in range(8)
+            ],
+        ]
+    )
+    payload = run_lob_capture_loop(
+        settings,
+        provider="kraken",
+        symbol="BTC/EUR",
+        levels=2,
+        session_id="lob-kraken-BTC_EUR-test",
+        rth_only=False,
+        client=client,
+        max_events=16,
+    )
+    assert payload["provider"] == "kraken"
+    assert payload["status"] == "stopped"
+    chunk_files = list((Path(settings.kraken_lob.output_root) / "BTC_EUR").glob("**/chunks/*.parquet"))
+    assert chunk_files
+
+    dataset_result = build_lob_dataset(
+        settings,
+        provider="kraken",
+        symbol="BTC/EUR",
+        from_date="2026-04-21",
+        horizon_events=1,
+    )
+    assert dataset_result["provider"] == "kraken"
+    assert dataset_result["dataset_type"] == "lob_depth"
+
+    train_payload = train_deep_model(
+        settings,
+        data_path=dataset_result["dataset_path"],
+        model_name="deep_lob_reference_like",
+        epochs=1,
+        set_active=True,
+    )
+    assert train_payload["metadata"]["provider"] == "kraken"
+    assert train_payload["metadata"]["dataset_type"] == "lob_depth"
+
+    sim_payload = run_kraken_paper_sim(
+        settings,
+        symbol="BTC/EUR",
+        model_artifact="active",
+        duration_minutes=1440,
+        from_date="2026-04-21",
+    )
+    assert sim_payload["status"] == "ok"
+    assert sim_payload["provider"] == "kraken"
+    assert sim_payload["note"].startswith("Local simulation only")
+
+
 def _build_temp_settings(tmp_path: Path):
     base_settings = load_settings(".env", config_dir="config")
     data_root = (tmp_path / "data").resolve()
@@ -201,7 +307,26 @@ def _build_temp_settings(tmp_path: Path):
         batch_size=2,
         flush_interval_seconds=0.1,
     )
-    return replace(base_settings, paths=paths, models=models, storage=storage, lob_capture=lob_capture)
+    kraken_lob = replace(
+        base_settings.kraken_lob,
+        output_root=str((data_root / "raw" / "kraken_lob").resolve()),
+        state_root=str((data_root / "processed" / "kraken_lob_state").resolve()),
+        session_root=str((data_root / "processed" / "kraken_lob_sessions").resolve()),
+        depth_levels=2,
+        batch_size=2,
+        flush_interval_seconds=0.1,
+        paper_fee_bps=26.0,
+        paper_initial_cash_eur=1000.0,
+        paper_slippage_bps=2.0,
+    )
+    return replace(
+        base_settings,
+        paths=paths,
+        models=models,
+        storage=storage,
+        lob_capture=lob_capture,
+        kraken_lob=kraken_lob,
+    )
 
 
 def _build_lob_raw_frame(session_date: str, *, rows: int) -> pd.DataFrame:
@@ -232,3 +357,27 @@ def _build_lob_raw_frame(session_date: str, *, rows: int) -> pd.DataFrame:
         }
     )
     return frame
+
+
+def _kraken_snapshot_event(symbol: str, timestamp: str, index: int) -> dict[str, object]:
+    base_price = 100.0 + index * 0.05
+    event = {
+        "event_type": "lob_snapshot",
+        "symbol": symbol,
+        "event_ts_utc": (pd.Timestamp(timestamp) + pd.Timedelta(seconds=index)).isoformat(),
+        "provider": "kraken",
+        "source": "kraken_spot_book",
+        "event_index": index + 1,
+        "reset_count": 0,
+        "observed_bid_levels": 2,
+        "observed_ask_levels": 2,
+        "bid_px_1": base_price,
+        "ask_px_1": base_price + 0.02,
+        "bid_px_2": base_price - 0.01,
+        "ask_px_2": base_price + 0.03,
+        "bid_sz_1": 1.0 + index,
+        "ask_sz_1": 1.5 + index,
+        "bid_sz_2": 2.0 + index,
+        "ask_sz_2": 2.5 + index,
+    }
+    return event

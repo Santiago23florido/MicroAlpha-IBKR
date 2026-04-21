@@ -1424,42 +1424,45 @@ The deep trainer now:
 - prints loss during training plus epoch-level metrics
 - uses GPU automatically when CUDA is available in the active virtual environment
 
-## Live IBKR LOB Capture and DeepLOB-like Training
+## Live LOB Capture and DeepLOB-like Training
 
-This repository now supports a separate **live Level II capture** pipeline for building a multilevel LOB dataset from IBKR and training a **DeepLOB-like** model that is closer to the research reference than the bar-based bootstrap route.
+This repository supports a separate **live Level II / order book capture** pipeline for building a multilevel LOB dataset and training a **DeepLOB-like** model that is closer to the research reference than the bar-based bootstrap route.
 
 Important constraints:
 
-- You need the correct **IBKR Level II / market depth subscription** for the symbol through the API.
+- For IBKR equities you need the correct **IBKR Level II / market depth subscription** for the symbol through the API.
+- For Kraken Spot crypto, public `book` WebSocket data is used and no market-data API key is required.
+- Kraken capture keeps TLS certificate verification enabled. If your browser or network marks Kraken as unsafe, do not enter credentials and do not run live capture until the network/certificate issue is understood.
 - The capture is **append-only**. Starting a new session adds new chunk files and updates manifests/state; it does not reset prior days.
-- The first cut is designed around **SPY**, **10 depth levels**, and **RTH only**.
+- IBKR capture is designed around **SPY**, **10 depth levels**, and **RTH only**.
+- Kraken capture defaults to **BTC/EUR**, **10 depth levels**, and crypto 24/7 session dates.
 - The model target follows the paper-style idea of **future mid-price movement over event horizons** rather than the bar-based net-return target.
 
-### Start Live LOB Capture
+### Start Live LOB Capture with Kraken
 
 ```bash
-python app.py start-lob-capture --symbol SPY --levels 10 --rth true
+python app.py start-lob-capture --provider kraken --symbol BTC/EUR --levels 10
 ```
 
 ### Stop Live LOB Capture
 
 ```bash
-python app.py stop-lob-capture --symbol SPY
+python app.py stop-lob-capture --provider kraken --symbol BTC/EUR
 ```
 
 ### Check Capture Status
 
 ```bash
-python app.py lob-capture-status --symbol SPY
+python app.py lob-capture-status --provider kraken --symbol BTC/EUR
 ```
 
 ### Build a Training Dataset from Captured Chunks
 
 ```bash
 python app.py build-lob-dataset \
-  --symbol SPY \
+  --provider kraken \
+  --symbol BTC/EUR \
   --from-date 2026-04-21 \
-  --to-date 2026-04-25 \
   --horizon-events 10
 ```
 
@@ -1472,21 +1475,21 @@ This produces an event-based parquet dataset under `data/processed/lob_datasets/
 ### Train the DeepLOB-like Model on GPU
 
 ```bash
-python app.py train --model-type deep --data-path data/processed/lob_datasets/SPY/SPY_2026-04-21_2026-04-25_k10.parquet
+python app.py train --model-type deep --data-path data/processed/lob_datasets/kraken/BTC_EUR/BTC_EUR_2026-04-21_latest_k10.parquet
 ```
 
-When the dataset type is `ibkr_lob_depth`, the `deep` trainer switches to the new multilevel route:
+When the dataset is LOB depth data, the `deep` trainer switches to the multilevel route:
 
 - sequence length defaults to `100`
 - depth defaults to `10` levels
 - input shape is `[sequence_length, 4 * depth_levels]`
 - training uses CUDA automatically when available
-- saved metadata records `dataset_type=ibkr_lob_depth`, depth, horizon, normalization, and daily/global metrics
+- saved metadata records provider, dataset type, depth, horizon, normalization, and daily/global metrics
 
 ### Daily Walk-Forward Evaluation
 
 ```bash
-python app.py evaluate-deep-daily --symbol SPY --from-date 2026-04-21 --epochs 2
+python app.py evaluate-deep-daily --provider kraken --symbol BTC/EUR --from-date 2026-04-21 --epochs 2
 ```
 
 This retrains day by day on the accumulated prior sessions and evaluates only the next session, emitting:
@@ -1496,21 +1499,45 @@ This retrains day by day on the accumulated prior sessions and evaluates only th
 - daily return MAE in bps
 - a JSON report and CSV under `data/reports/lob/`
 
+### Local Kraken Paper Simulation
+
+Kraken Spot does not provide a free official paper-trading environment equivalent to broker paper execution. The project therefore includes a local simulator that replays captured Kraken books, applies configured fees/slippage, and sends **no real orders**:
+
+```bash
+python app.py run-kraken-paper-sim --symbol BTC/EUR --model-artifact active --duration-minutes 60
+```
+
+The report is written under `data/reports/lob/kraken_paper/`.
+
+### IBKR Variant
+
+The IBKR route remains available if you later activate Level II permissions:
+
+```bash
+python app.py start-lob-capture --provider ibkr --symbol SPY --levels 10 --rth true
+python app.py lob-capture-status --provider ibkr --symbol SPY
+python app.py stop-lob-capture --provider ibkr --symbol SPY
+```
+
 ### Storage Layout
 
 Raw LOB capture:
 
 - `data/raw/ibkr_lob/<SYMBOL>/<YYYY-MM-DD>/chunks/*.parquet`
 - `data/raw/ibkr_lob/<SYMBOL>/<YYYY-MM-DD>/manifest.json`
+- `data/raw/kraken_lob/<SYMBOL_TOKEN>/<YYYY-MM-DD>/chunks/*.parquet`
+- `data/raw/kraken_lob/<SYMBOL_TOKEN>/<YYYY-MM-DD>/manifest.json`
 
 Capture control and state:
 
 - `data/processed/ibkr_lob_state/<SYMBOL>.json`
 - `data/processed/ibkr_lob_sessions/<session_id>.json`
+- `data/processed/kraken_lob_state/<SYMBOL_TOKEN>.json`
+- `data/processed/kraken_lob_sessions/<session_id>.json`
 
 Processed training datasets:
 
-- `data/processed/lob_datasets/<SYMBOL>/*.parquet`
+- `data/processed/lob_datasets/<provider>/<SYMBOL_TOKEN>/*.parquet`
 - matching `.manifest.json` and `.daily.json`
 
 ### Current Limitation vs the Paper
@@ -1518,7 +1545,7 @@ Processed training datasets:
 This is the correct direction for a DeepLOB-style model, but it is still not identical to the paper setup:
 
 - the paper used a dedicated historical LOB dataset already captured from the venue
-- here you build the dataset **forward in time** from IBKR API depth updates
+- here you build the dataset **forward in time** from live provider updates
 - model quality will depend heavily on the actual depth feed quality, observed levels, and continuity of your live capture sessions
 
 ## Next Phase

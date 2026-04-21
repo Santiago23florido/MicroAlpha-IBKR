@@ -15,14 +15,17 @@ def build_lob_dataset(
     *,
     symbol: str,
     from_date: str,
+    provider: str = "ibkr",
     to_date: str | None = None,
     horizon_events: int | None = None,
     output_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    ticker = symbol.upper()
+    resolved_provider = _normalize_provider(provider)
+    ticker = _normalize_lob_symbol(symbol, resolved_provider)
     raw_frame, source_files = load_lob_capture_frame(
         settings,
         symbol=ticker,
+        provider=resolved_provider,
         from_date=from_date,
         to_date=to_date,
     )
@@ -37,14 +40,14 @@ def build_lob_dataset(
         horizon_events=resolved_horizon,
         stationary_threshold_bps=settings.models.lob_stationary_threshold_bps,
     )
-    labeled["dataset_type"] = "ibkr_lob_depth"
-    labeled["provider"] = "ibkr"
-    labeled["source"] = "ibkr_market_depth"
+    labeled["dataset_type"] = "ibkr_lob_depth" if resolved_provider == "ibkr" else "lob_depth"
+    labeled["provider"] = resolved_provider
+    labeled["source"] = "ibkr_market_depth" if resolved_provider == "ibkr" else "kraken_spot_book"
     labeled["depth_levels"] = settings.models.lob_depth_levels
     labeled["horizon_events"] = resolved_horizon
     labeled["stationary_threshold_bps"] = settings.models.lob_stationary_threshold_bps
 
-    target_path = _default_dataset_path(settings, ticker, from_date, to_date, resolved_horizon)
+    target_path = _default_dataset_path(settings, ticker, from_date, to_date, resolved_horizon, provider=resolved_provider)
     if output_path is not None:
         target_path = Path(output_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,10 +57,10 @@ def build_lob_dataset(
     daily_summary_path = target_path.with_suffix(".daily.json")
     manifest = {
         "status": "ok",
-        "dataset_type": "ibkr_lob_depth",
+        "dataset_type": "ibkr_lob_depth" if resolved_provider == "ibkr" else "lob_depth",
         "symbol": ticker,
-        "provider": "ibkr",
-        "source": "ibkr_market_depth",
+        "provider": resolved_provider,
+        "source": "ibkr_market_depth" if resolved_provider == "ibkr" else "kraken_spot_book",
         "from_date": from_date,
         "to_date": to_date or str(labeled["session_date"].max()),
         "depth_levels": settings.models.lob_depth_levels,
@@ -96,7 +99,8 @@ def build_lob_dataset(
         "manifest_path": str(manifest_path),
         "daily_summary_path": str(daily_summary_path),
         "row_count": int(len(labeled)),
-        "dataset_type": "ibkr_lob_depth",
+        "dataset_type": "ibkr_lob_depth" if resolved_provider == "ibkr" else "lob_depth",
+        "provider": resolved_provider,
         "symbol": ticker,
     }
 
@@ -105,11 +109,13 @@ def load_lob_capture_frame(
     settings: Settings,
     *,
     symbol: str,
+    provider: str = "ibkr",
     from_date: str,
     to_date: str | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
-    ticker = symbol.upper()
-    root = Path(settings.lob_capture.output_root) / ticker
+    resolved_provider = _normalize_provider(provider)
+    ticker = _normalize_lob_symbol(symbol, resolved_provider)
+    root = Path(_provider_output_root(settings, resolved_provider)) / _symbol_path_token(ticker)
     if not root.exists():
         return pd.DataFrame(), []
 
@@ -144,10 +150,37 @@ def _default_dataset_path(
     from_date: str,
     to_date: str | None,
     horizon_events: int,
+    *,
+    provider: str,
 ) -> Path:
     end_token = to_date or "latest"
     return (
         Path(settings.lob_capture.dataset_root)
-        / symbol.upper()
-        / f"{symbol.upper()}_{from_date}_{end_token}_k{horizon_events}.parquet"
+        / _normalize_provider(provider)
+        / _symbol_path_token(symbol)
+        / f"{_symbol_path_token(symbol)}_{from_date}_{end_token}_k{horizon_events}.parquet"
     )
+
+
+def _provider_output_root(settings: Settings, provider: str) -> str:
+    if provider == "kraken":
+        return settings.kraken_lob.output_root
+    return settings.lob_capture.output_root
+
+
+def _normalize_provider(provider: str) -> str:
+    normalized = str(provider or "ibkr").strip().lower()
+    if normalized not in {"ibkr", "kraken"}:
+        raise ValueError(f"Unsupported LOB provider: {provider!r}. Use 'ibkr' or 'kraken'.")
+    return normalized
+
+
+def _normalize_lob_symbol(symbol: str, provider: str) -> str:
+    value = str(symbol).strip().upper()
+    if provider == "kraken":
+        return value.replace("-", "/")
+    return value
+
+
+def _symbol_path_token(symbol: str) -> str:
+    return str(symbol).upper().replace("/", "_").replace("-", "_").replace(" ", "_")

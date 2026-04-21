@@ -1,7 +1,7 @@
 {
   "active": {
     "baseline": null,
-    "deep": "deep-20260420T233856-b4b83161"
+    "deep": "deep-20260421T075507-ac800e58"
   },
   "baseline": [],
   "deep": [
@@ -40,6 +40,70 @@
         "classification_threshold_bps": 1.25,
         "horizon_minutes": 3,
         "sequence_length": 16
+      }
+    },
+    {
+      "artifact_id": "deep-20260421T075507-ac800e58",
+      "artifact_path": "/home/santiago/ibkr_invest/data/models/artifacts/deep/deep-20260421T075507-ac800e58.pt",
+      "dataset_type": "lob_depth",
+      "feature_set": [
+        "bid_px_1",
+        "bid_px_2",
+        "bid_px_3",
+        "bid_px_4",
+        "bid_px_5",
+        "bid_px_6",
+        "bid_px_7",
+        "bid_px_8",
+        "bid_px_9",
+        "bid_px_10",
+        "ask_px_1",
+        "ask_px_2",
+        "ask_px_3",
+        "ask_px_4",
+        "ask_px_5",
+        "ask_px_6",
+        "ask_px_7",
+        "ask_px_8",
+        "ask_px_9",
+        "ask_px_10",
+        "bid_sz_1",
+        "bid_sz_2",
+        "bid_sz_3",
+        "bid_sz_4",
+        "bid_sz_5",
+        "bid_sz_6",
+        "bid_sz_7",
+        "bid_sz_8",
+        "bid_sz_9",
+        "bid_sz_10",
+        "ask_sz_1",
+        "ask_sz_2",
+        "ask_sz_3",
+        "ask_sz_4",
+        "ask_sz_5",
+        "ask_sz_6",
+        "ask_sz_7",
+        "ask_sz_8",
+        "ask_sz_9",
+        "ask_sz_10"
+      ],
+      "metadata_path": "/home/santiago/ibkr_invest/data/models/artifacts/deep/deep-20260421T075507-ac800e58.metadata.json",
+      "metrics": {
+        "accuracy": 1.0,
+        "macro_f1": 1.0,
+        "return_mae_bps": 0.04067840367213063
+      },
+      "model_family": "deep_lob_reference_like",
+      "model_name": "deep_lob_lite",
+      "model_type": "deep",
+      "provider": "kraken",
+      "registered_at": "2026-04-21T07:55:07.306558+00:00",
+      "target_definition": {
+        "depth_levels": 10,
+        "horizon_events": 10,
+        "sequence_length": 100,
+        "stationary_threshold_bps": 2.0
       }
     }
   ],

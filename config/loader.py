@@ -218,6 +218,25 @@ class LOBCaptureSettings:
 
 
 @dataclass(frozen=True)
+class KrakenLOBSettings:
+    enabled: bool = False
+    symbol: str = "BTC/EUR"
+    depth_levels: int = 10
+    flush_interval_seconds: float = 15.0
+    batch_size: int = 250
+    output_root: str = "data/raw/kraken_lob"
+    state_root: str = "data/processed/kraken_lob_state"
+    session_root: str = "data/processed/kraken_lob_sessions"
+    websocket_url: str = "wss://ws.kraken.com/v2"
+    reconnect_delay_seconds: float = 10.0
+    max_reconnect_attempts: int = 5
+    startup_wait_seconds: float = 5.0
+    paper_fee_bps: float = 26.0
+    paper_initial_cash_eur: float = 10000.0
+    paper_slippage_bps: float = 2.0
+
+
+@dataclass(frozen=True)
 class FeaturePipelineSettings:
     gap_threshold_seconds: int = 120
     max_abs_spread_bps: float = 250.0
@@ -297,6 +316,7 @@ class Settings:
     ui: UISettings
     collector: CollectorSettings = field(default_factory=CollectorSettings)
     lob_capture: LOBCaptureSettings = field(default_factory=LOBCaptureSettings)
+    kraken_lob: KrakenLOBSettings = field(default_factory=KrakenLOBSettings)
     feature_pipeline: FeaturePipelineSettings = field(default_factory=FeaturePipelineSettings)
     lan_sync: LanSyncSettings = field(default_factory=LanSyncSettings)
     paths: PathSettings = field(default_factory=PathSettings)
@@ -611,6 +631,7 @@ def load_settings(
     ui_defaults = merged_settings.get("ui", {})
     collector_defaults = merged_settings.get("collector", {})
     lob_capture_defaults = merged_settings.get("lob_capture", {})
+    kraken_lob_defaults = merged_settings.get("kraken_lob", {})
     feature_pipeline_defaults = merged_settings.get("feature_pipeline", {})
     lan_sync_defaults = merged_settings.get("lan_sync", {})
 
@@ -923,6 +944,87 @@ def load_settings(
                 runtime_env,
                 "LOB_CAPTURE_STARTUP_WAIT_SECONDS",
                 float(lob_capture_defaults.get("startup_wait_seconds", 5.0)),
+            ),
+        ),
+        kraken_lob=KrakenLOBSettings(
+            enabled=_parse_bool(
+                runtime_env,
+                "KRAKEN_LOB_ENABLED",
+                bool(kraken_lob_defaults.get("enabled", False)),
+            ),
+            symbol=runtime_env.get(
+                "KRAKEN_LOB_SYMBOL",
+                str(kraken_lob_defaults.get("symbol", "BTC/EUR")),
+            ).upper().replace("-", "/"),
+            depth_levels=_parse_int(
+                runtime_env,
+                "KRAKEN_LOB_DEPTH_LEVELS",
+                int(kraken_lob_defaults.get("depth_levels", 10)),
+            ),
+            flush_interval_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_LOB_FLUSH_INTERVAL_SECONDS",
+                float(kraken_lob_defaults.get("flush_interval_seconds", 15.0)),
+            ),
+            batch_size=_parse_int(
+                runtime_env,
+                "KRAKEN_LOB_BATCH_SIZE",
+                int(kraken_lob_defaults.get("batch_size", 250)),
+            ),
+            output_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "KRAKEN_LOB_OUTPUT_ROOT",
+                    str(kraken_lob_defaults.get("output_root", "data/raw/kraken_lob")),
+                ),
+            ),
+            state_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "KRAKEN_LOB_STATE_ROOT",
+                    str(kraken_lob_defaults.get("state_root", "data/processed/kraken_lob_state")),
+                ),
+            ),
+            session_root=_resolve_path(
+                project_root,
+                runtime_env.get(
+                    "KRAKEN_LOB_SESSION_ROOT",
+                    str(kraken_lob_defaults.get("session_root", "data/processed/kraken_lob_sessions")),
+                ),
+            ),
+            websocket_url=runtime_env.get(
+                "KRAKEN_LOB_WEBSOCKET_URL",
+                str(kraken_lob_defaults.get("websocket_url", "wss://ws.kraken.com/v2")),
+            ),
+            reconnect_delay_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_LOB_RECONNECT_DELAY_SECONDS",
+                float(kraken_lob_defaults.get("reconnect_delay_seconds", 10.0)),
+            ),
+            max_reconnect_attempts=_parse_int(
+                runtime_env,
+                "KRAKEN_LOB_MAX_RECONNECT_ATTEMPTS",
+                int(kraken_lob_defaults.get("max_reconnect_attempts", 5)),
+            ),
+            startup_wait_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_LOB_STARTUP_WAIT_SECONDS",
+                float(kraken_lob_defaults.get("startup_wait_seconds", 5.0)),
+            ),
+            paper_fee_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_FEE_BPS",
+                float(kraken_lob_defaults.get("paper_fee_bps", 26.0)),
+            ),
+            paper_initial_cash_eur=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_INITIAL_CASH_EUR",
+                float(kraken_lob_defaults.get("paper_initial_cash_eur", 10000.0)),
+            ),
+            paper_slippage_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_SLIPPAGE_BPS",
+                float(kraken_lob_defaults.get("paper_slippage_bps", 2.0)),
             ),
         ),
         feature_pipeline=FeaturePipelineSettings(

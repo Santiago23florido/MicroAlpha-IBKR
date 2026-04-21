@@ -110,12 +110,15 @@ def evaluate_deep_daily(
     settings: Settings,
     *,
     symbol: str,
+    provider: str = "ibkr",
     from_date: str,
     epochs: int = 2,
 ) -> dict[str, object]:
+    resolved_provider = _normalize_lob_provider(provider)
     raw_frame, source_files = load_lob_capture_frame(
         settings,
         symbol=symbol.upper(),
+        provider=resolved_provider,
         from_date=from_date,
         to_date=None,
     )
@@ -127,7 +130,9 @@ def evaluate_deep_daily(
         horizon_events=settings.models.lob_horizon_events,
         stationary_threshold_bps=settings.models.lob_stationary_threshold_bps,
     )
-    labeled["dataset_type"] = "ibkr_lob_depth"
+    dataset_type = _resolve_lob_dataset_type(labeled, resolved_provider)
+    labeled["dataset_type"] = dataset_type
+    labeled["provider"] = resolved_provider
     batch = build_lob_sequence_batch(
         labeled,
         depth_levels=settings.models.lob_depth_levels,
@@ -167,7 +172,7 @@ def evaluate_deep_daily(
     if not rows:
         raise ValueError("Walk-forward daily evaluation could not build any train/test splits.")
 
-    report_root = Path(settings.lob_capture.report_root) / symbol.upper()
+    report_root = Path(settings.lob_capture.report_root) / resolved_provider / _symbol_path_token(symbol)
     report_root.mkdir(parents=True, exist_ok=True)
     token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     report_path = report_root / f"deep_daily_eval_{token}.json"
@@ -175,8 +180,8 @@ def evaluate_deep_daily(
     payload = {
         "status": "ok",
         "symbol": symbol.upper(),
-        "provider": "ibkr",
-        "dataset_type": "ibkr_lob_depth",
+        "provider": resolved_provider,
+        "dataset_type": dataset_type,
         "from_date": from_date,
         "epochs": epochs,
         "sequence_length": settings.models.lob_sequence_length,
@@ -223,6 +228,8 @@ def _train_lob_deep_model(
     )
     metrics = _evaluate_lob_batch(model, valid_batch, device)
     daily_metrics = _evaluate_lob_daily_metrics(model, valid_batch, device)
+    provider = _resolve_lob_provider(raw_frame)
+    dataset_type = _resolve_lob_dataset_type(raw_frame, provider)
     artifact_id = f"deep-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{uuid4().hex[:8]}"
     artifact_dir = Path(settings.models.artifacts_dir) / "deep"
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +244,8 @@ def _train_lob_deep_model(
             "depth_levels": depth_levels,
             "model_name": model_name,
             "model_family": "deep_lob_reference_like",
-            "dataset_type": "ibkr_lob_depth",
+            "dataset_type": dataset_type,
+            "provider": provider,
             "horizon_events": int(raw_frame.get("horizon_events", pd.Series([settings.models.lob_horizon_events])).iloc[0]),
             "normalization": "price_rel_to_last_mid_bps_and_log1p_sizes",
             "class_index": {-1: 0, 0: 1, 1: 2},
@@ -249,7 +257,8 @@ def _train_lob_deep_model(
         "model_name": model_name,
         "training_date": datetime.now(timezone.utc).isoformat(),
         "data_source": data_path or "lob_capture",
-        "dataset_type": "ibkr_lob_depth",
+        "dataset_type": dataset_type,
+        "provider": provider,
         "feature_set": feature_columns,
         "target_definition": {
             "horizon_events": int(raw_frame.get("horizon_events", pd.Series([settings.models.lob_horizon_events])).iloc[0]),
@@ -279,7 +288,8 @@ def _train_lob_deep_model(
             "metadata_path": str(metadata_path),
             "metrics": metrics,
             "feature_set": feature_columns,
-            "dataset_type": "ibkr_lob_depth",
+            "dataset_type": dataset_type,
+            "provider": provider,
             "target_definition": metadata["target_definition"],
             "model_family": "deep_lob_reference_like",
         },
@@ -516,7 +526,7 @@ def _fit_lob_model(
     reg_loss_fn = nn.MSELoss()
     batch_log_interval = max(len(loader) // 10, 1)
     logger.info(
-        "Deep training device | device=%s | dataset_type=ibkr_lob_depth | sequence_length=%s | depth_levels=%s | horizon_events=%s",
+        "Deep training device | device=%s | dataset_type=lob_depth | sequence_length=%s | depth_levels=%s | horizon_events=%s",
         _describe_device(device),
         sequence_length,
         feature_dim // 4,
@@ -691,3 +701,28 @@ def _infer_depth_levels(frame: pd.DataFrame, default_levels: int) -> int:
             with suppress(ValueError):
                 candidates.append(int(column.split("_")[-1]))
     return max(candidates) if candidates else default_levels
+
+
+def _normalize_lob_provider(provider: str) -> str:
+    normalized = str(provider or "ibkr").strip().lower()
+    if normalized not in {"ibkr", "kraken"}:
+        raise ValueError(f"Unsupported LOB provider: {provider!r}. Use 'ibkr' or 'kraken'.")
+    return normalized
+
+
+def _resolve_lob_provider(frame: pd.DataFrame) -> str:
+    if "provider" not in frame.columns or frame.empty:
+        return "ibkr"
+    return _normalize_lob_provider(str(frame["provider"].iloc[0]))
+
+
+def _resolve_lob_dataset_type(frame: pd.DataFrame, provider: str) -> str:
+    if "dataset_type" in frame.columns and not frame.empty:
+        current = str(frame["dataset_type"].iloc[0])
+        if current in {"ibkr_lob_depth", "kraken_lob_depth", "lob_depth"}:
+            return current
+    return "ibkr_lob_depth" if provider == "ibkr" else "lob_depth"
+
+
+def _symbol_path_token(symbol: str) -> str:
+    return str(symbol).upper().replace("/", "_").replace("-", "_").replace(" ", "_")

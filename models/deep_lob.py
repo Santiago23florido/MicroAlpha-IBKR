@@ -61,7 +61,7 @@ class DeepLOBReferenceLike(nn.Module):
 def is_lob_dataset(frame: pd.DataFrame) -> bool:
     if "dataset_type" in frame.columns:
         try:
-            return str(frame["dataset_type"].iloc[0]) == "ibkr_lob_depth"
+            return str(frame["dataset_type"].iloc[0]) in {"ibkr_lob_depth", "kraken_lob_depth", "lob_depth"}
         except IndexError:
             return False
     return {"bid_px_1", "ask_px_1", "bid_sz_1", "ask_sz_1"}.issubset(frame.columns)

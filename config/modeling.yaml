@@ -1,6 +1,6 @@
 defaults:
   lob:
-    dataset_type: ibkr_lob_depth
+    dataset_type: lob_depth
     depth_levels: 10
     sequence_length: 100
     horizon_events_options: [10, 20, 50]

@@ -17,6 +17,7 @@ import pandas as pd
 from broker.ib_client import IBClient, IBClientError
 from config import Settings
 from engine.market_clock import MarketClock
+from ingestion.kraken_lob_client import KrakenLOBClient, KrakenLOBClientError
 from ingestion.lob_reconstruction import LOBBookState, LOBDepthUpdate
 from monitoring.logging import setup_logger
 
@@ -51,6 +52,21 @@ class LOBMarketDataClient(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     def cancel_market_depth(self, req_id: int) -> None: ...
+
+
+@dataclass(frozen=True)
+class LOBProviderStorage:
+    provider: str
+    source: str
+    output_root: str
+    state_root: str
+    session_root: str
+    batch_size: int
+    flush_interval_seconds: float
+    rth_only: bool
+    reconnect_delay_seconds: float
+    max_reconnect_attempts: int
+    startup_wait_seconds: float
 
 
 @dataclass
@@ -100,7 +116,7 @@ class LOBParquetSink:
         min_ts = None
         max_ts = None
         for session_date, group in frame.groupby("session_date", dropna=False):
-            date_dir = self.root_dir / str(group["symbol"].iloc[0]).upper() / str(session_date)
+            date_dir = self.root_dir / _symbol_path_token(str(group["symbol"].iloc[0])) / str(session_date)
             chunk_dir = date_dir / "chunks"
             chunk_dir.mkdir(parents=True, exist_ok=True)
             token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -142,6 +158,7 @@ class LOBCaptureCollector:
         self,
         settings: Settings,
         *,
+        provider: str,
         symbol: str,
         depth_levels: int,
         rth_only: bool,
@@ -150,21 +167,24 @@ class LOBCaptureCollector:
         client: LOBMarketDataClient | None = None,
     ) -> None:
         self.settings = settings
-        self.symbol = symbol.upper()
+        self.provider = _normalize_provider(provider)
+        self.storage = _lob_provider_storage(settings, self.provider)
+        self.symbol = _normalize_lob_symbol(symbol, self.provider)
+        self.symbol_token = _symbol_path_token(self.symbol)
         self.depth_levels = depth_levels
         self.rth_only = rth_only
         self.session_id = session_id
         self.logger = logger
-        self.client = client or _build_lob_client(settings, logger)
+        self.client = client or _build_lob_client(settings, logger, provider=self.provider)
         self.market_clock = MarketClock(settings.session)
         self.book = LOBBookState(symbol=self.symbol, depth_levels=depth_levels)
         self.sink = LOBParquetSink(
-            root_dir=Path(settings.lob_capture.output_root),
-            batch_size=settings.lob_capture.batch_size,
-            flush_interval_seconds=settings.lob_capture.flush_interval_seconds,
+            root_dir=Path(self.storage.output_root),
+            batch_size=self.storage.batch_size,
+            flush_interval_seconds=self.storage.flush_interval_seconds,
             logger=logger,
         )
-        self.state_path = _lob_state_path(settings, self.symbol)
+        self.state_path = _lob_state_path(settings, self.symbol, provider=self.provider)
         self.session_path = _lob_session_path(settings, session_id)
         self._stop_requested = False
         self._current_req_id: int | None = None
@@ -214,16 +234,16 @@ class LOBCaptureCollector:
                         timeout=1.0,
                         max_events=1000,
                     )
-                except IBClientError as exc:
+                except (IBClientError, KrakenLOBClientError) as exc:
                     reconnect_attempts += 1
-                    if reconnect_attempts > self.settings.lob_capture.max_reconnect_attempts:
+                    if reconnect_attempts > self.storage.max_reconnect_attempts:
                         raise IBClientError(
                             f"LOB capture exceeded reconnect attempts for {self.symbol}: {exc}"
                         ) from exc
                     self.logger.warning(
                         "LOB capture reconnect %s/%s after error: %s",
                         reconnect_attempts,
-                        self.settings.lob_capture.max_reconnect_attempts,
+                        self.storage.max_reconnect_attempts,
                         exc,
                     )
                     self._reconnect()
@@ -268,6 +288,32 @@ class LOBCaptureCollector:
                         continue
                     if event_type == "connection_closed":
                         raise IBClientError(str(event.get("message") or "LOB capture connection closed."))
+                    if event_type == "lob_snapshot":
+                        snapshot = dict(event)
+                        event_ts = pd.Timestamp(snapshot["event_ts_utc"])
+                        if event_ts.tzinfo is None:
+                            event_ts = event_ts.tz_localize("UTC")
+                        else:
+                            event_ts = event_ts.tz_convert("UTC")
+                        snapshot["symbol"] = self.symbol
+                        snapshot["capture_session_id"] = self.session_id
+                        snapshot["exchange_ts"] = event_ts.isoformat()
+                        snapshot["session_date"] = event_ts.date().isoformat()
+                        snapshot["session_window"] = "crypto_24_7" if self.provider == "kraken" else "unknown"
+                        snapshot["provider"] = self.provider
+                        snapshot["source"] = self.storage.source
+                        snapshot["rth_only"] = self.rth_only
+                        self.sink.append(snapshot)
+                        processed_rows += 1
+                        levels_observed = max(
+                            levels_observed,
+                            int(snapshot.get("observed_bid_levels", 0)),
+                            int(snapshot.get("observed_ask_levels", 0)),
+                        )
+                        if max_events is not None and processed_rows >= max_events:
+                            self._stop_requested = True
+                            break
+                        continue
                     update = LOBDepthUpdate(
                         symbol=self.symbol,
                         timestamp_utc=str(event["timestamp_utc"]),
@@ -336,14 +382,14 @@ class LOBCaptureCollector:
             summary = {
                 "status": status,
                 "symbol": self.symbol,
-                "provider": "ibkr",
+                "provider": self.provider,
                 "session_id": self.session_id,
                 "row_count": row_count,
                 "persisted_rows": self.sink.persisted_rows,
                 "flush_count": self.sink.flush_count,
                 "state_path": str(self.state_path),
                 "session_path": str(self.session_path),
-                "output_root": self.settings.lob_capture.output_root,
+                "output_root": self.storage.output_root,
                 "depth_levels_requested": self.depth_levels,
                 "levels_observed": levels_observed,
             }
@@ -361,13 +407,22 @@ class LOBCaptureCollector:
 
     def _connect_and_subscribe(self) -> None:
         self.client.connect()
-        self._current_req_id = self.client.subscribe_market_depth(
-            symbol=self.symbol,
-            num_rows=self.depth_levels,
-            exchange=self.settings.ib_exchange,
-            currency=self.settings.ib_currency,
-            is_smart_depth=True,
-        )
+        if self.provider == "ibkr":
+            self._current_req_id = self.client.subscribe_market_depth(
+                symbol=self.symbol,
+                num_rows=self.depth_levels,
+                exchange=self.settings.ib_exchange,
+                currency=self.settings.ib_currency,
+                is_smart_depth=True,
+            )
+        else:
+            self._current_req_id = self.client.subscribe_market_depth(
+                symbol=self.symbol,
+                num_rows=self.depth_levels,
+                exchange=None,
+                currency=None,
+                is_smart_depth=False,
+            )
         self._write_state(
             status="running",
             connected=True,
@@ -390,15 +445,24 @@ class LOBCaptureCollector:
         with suppress(Exception):
             self.client.disconnect()
         self.book.reset()
-        time.sleep(self.settings.lob_capture.reconnect_delay_seconds)
+        time.sleep(self.storage.reconnect_delay_seconds)
         self.client.connect()
-        self._current_req_id = self.client.subscribe_market_depth(
-            symbol=self.symbol,
-            num_rows=self.depth_levels,
-            exchange=self.settings.ib_exchange,
-            currency=self.settings.ib_currency,
-            is_smart_depth=True,
-        )
+        if self.provider == "ibkr":
+            self._current_req_id = self.client.subscribe_market_depth(
+                symbol=self.symbol,
+                num_rows=self.depth_levels,
+                exchange=self.settings.ib_exchange,
+                currency=self.settings.ib_currency,
+                is_smart_depth=True,
+            )
+        else:
+            self._current_req_id = self.client.subscribe_market_depth(
+                symbol=self.symbol,
+                num_rows=self.depth_levels,
+                exchange=None,
+                currency=None,
+                is_smart_depth=False,
+            )
 
     def _flush_if_needed(self, *, levels_observed: int) -> None:
         flushed = self.sink.flush_if_due()
@@ -446,6 +510,7 @@ class LOBCaptureCollector:
             {
                 **current,
                 "symbol": self.symbol,
+                "provider": self.provider,
                 "status": status,
                 "pid": os.getpid(),
                 "pid_alive": True,
@@ -462,7 +527,7 @@ class LOBCaptureCollector:
                 "reset_count": max(int(current.get("reset_count", 0)), reset_count),
                 "reconnect_attempts": max(int(current.get("reconnect_attempts", 0)), reconnect_attempts),
                 "rth_only": self.rth_only,
-                "output_root": self.settings.lob_capture.output_root,
+                "output_root": self.storage.output_root,
                 "state_path": str(self.state_path),
                 "session_path": str(self.session_path),
                 "updated_at": _utc_now_iso(),
@@ -501,26 +566,31 @@ def start_lob_capture(
     settings: Settings,
     *,
     symbol: str,
+    provider: str = "ibkr",
     levels: int | None = None,
     rth_only: bool | None = None,
 ) -> dict[str, Any]:
-    ticker = symbol.upper()
-    state_path = _lob_state_path(settings, ticker)
+    resolved_provider = _normalize_provider(provider)
+    storage = _lob_provider_storage(settings, resolved_provider)
+    ticker = _normalize_lob_symbol(symbol, resolved_provider)
+    symbol_token = _symbol_path_token(ticker)
+    state_path = _lob_state_path(settings, ticker, provider=resolved_provider)
     current = _read_json(state_path)
     current_pid = current.get("pid")
     if isinstance(current_pid, int) and _pid_is_alive(current_pid):
         return {
             "status": "already_running",
             "symbol": ticker,
+            "provider": resolved_provider,
             "pid": current_pid,
             "state_path": str(state_path),
             "active_session_id": current.get("active_session_id"),
         }
 
-    requested_levels = levels or settings.lob_capture.depth_levels
-    requested_rth = settings.lob_capture.rth_only if rth_only is None else bool(rth_only)
-    session_id = f"lob-{ticker}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
-    log_path = Path(settings.paths.log_dir) / f"lob_capture_{ticker.lower()}.log"
+    requested_levels = levels or (settings.kraken_lob.depth_levels if resolved_provider == "kraken" else settings.lob_capture.depth_levels)
+    requested_rth = storage.rth_only if rth_only is None else bool(rth_only)
+    session_id = f"lob-{resolved_provider}-{symbol_token}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+    log_path = Path(settings.paths.log_dir) / f"lob_capture_{resolved_provider}_{symbol_token.lower()}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable,
@@ -532,6 +602,8 @@ def start_lob_capture(
         "--environment",
         settings.environment,
         "_lob-capture-runner",
+        "--provider",
+        resolved_provider,
         "--symbol",
         ticker,
         "--levels",
@@ -553,6 +625,7 @@ def start_lob_capture(
         state_path,
         {
             "symbol": ticker,
+            "provider": resolved_provider,
             "status": "starting",
             "pid": process.pid,
             "pid_alive": True,
@@ -567,17 +640,18 @@ def start_lob_capture(
             "rth_only": requested_rth,
             "state_path": str(state_path),
             "session_path": str(_lob_session_path(settings, session_id)),
-            "output_root": settings.lob_capture.output_root,
+            "output_root": storage.output_root,
             "log_path": str(log_path),
             "updated_at": _utc_now_iso(),
         },
     )
-    time.sleep(settings.lob_capture.startup_wait_seconds)
+    time.sleep(storage.startup_wait_seconds)
     started_state = _read_json(state_path)
     if process.poll() is not None and started_state.get("status") == "starting":
         return {
             "status": "error",
             "symbol": ticker,
+            "provider": resolved_provider,
             "message": f"LOB capture process exited immediately. Check {log_path}.",
             "state_path": str(state_path),
             "log_path": str(log_path),
@@ -585,6 +659,7 @@ def start_lob_capture(
     return {
         "status": "ok",
         "symbol": ticker,
+        "provider": resolved_provider,
         "pid": process.pid,
         "session_id": session_id,
         "state_path": str(state_path),
@@ -594,15 +669,17 @@ def start_lob_capture(
     }
 
 
-def stop_lob_capture(settings: Settings, *, symbol: str) -> dict[str, Any]:
-    ticker = symbol.upper()
-    state_path = _lob_state_path(settings, ticker)
+def stop_lob_capture(settings: Settings, *, symbol: str, provider: str = "ibkr") -> dict[str, Any]:
+    resolved_provider = _normalize_provider(provider)
+    ticker = _normalize_lob_symbol(symbol, resolved_provider)
+    state_path = _lob_state_path(settings, ticker, provider=resolved_provider)
     state = _read_json(state_path)
     pid = state.get("pid")
     if not isinstance(pid, int):
         return {
             "status": "already_stopped",
             "symbol": ticker,
+            "provider": resolved_provider,
             "state_path": str(state_path),
         }
     _write_json(
@@ -623,19 +700,22 @@ def stop_lob_capture(settings: Settings, *, symbol: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "symbol": ticker,
+        "provider": resolved_provider,
         "state_path": str(state_path),
         "state": final_state,
     }
 
 
-def lob_capture_status(settings: Settings, *, symbol: str) -> dict[str, Any]:
-    ticker = symbol.upper()
-    state_path = _lob_state_path(settings, ticker)
+def lob_capture_status(settings: Settings, *, symbol: str, provider: str = "ibkr") -> dict[str, Any]:
+    resolved_provider = _normalize_provider(provider)
+    ticker = _normalize_lob_symbol(symbol, resolved_provider)
+    state_path = _lob_state_path(settings, ticker, provider=resolved_provider)
     state = _read_json(state_path)
     if not state:
         return {
             "status": "missing",
             "symbol": ticker,
+            "provider": resolved_provider,
             "state_path": str(state_path),
         }
     pid = state.get("pid")
@@ -643,6 +723,7 @@ def lob_capture_status(settings: Settings, *, symbol: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "symbol": ticker,
+        "provider": resolved_provider,
         "state_path": str(state_path),
         "state": state,
     }
@@ -652,24 +733,29 @@ def run_lob_capture_loop(
     settings: Settings,
     *,
     symbol: str,
+    provider: str = "ibkr",
     levels: int | None = None,
     session_id: str | None = None,
     rth_only: bool | None = None,
     client: LOBMarketDataClient | None = None,
     max_events: int | None = None,
 ) -> dict[str, Any]:
-    ticker = symbol.upper()
-    capture_session_id = session_id or f"lob-{ticker}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+    resolved_provider = _normalize_provider(provider)
+    storage = _lob_provider_storage(settings, resolved_provider)
+    ticker = _normalize_lob_symbol(symbol, resolved_provider)
+    symbol_token = _symbol_path_token(ticker)
+    capture_session_id = session_id or f"lob-{resolved_provider}-{symbol_token}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
     logger = setup_logger(
         settings.log_level,
-        Path(settings.paths.log_dir) / f"lob_capture_{ticker.lower()}.log",
-        logger_name="microalpha.ibkr.lob_capture",
+        Path(settings.paths.log_dir) / f"lob_capture_{resolved_provider}_{symbol_token.lower()}.log",
+        logger_name=f"microalpha.{resolved_provider}.lob_capture",
     )
     collector = LOBCaptureCollector(
         settings,
+        provider=resolved_provider,
         symbol=ticker,
-        depth_levels=levels or settings.lob_capture.depth_levels,
-        rth_only=settings.lob_capture.rth_only if rth_only is None else bool(rth_only),
+        depth_levels=levels or (settings.kraken_lob.depth_levels if resolved_provider == "kraken" else settings.lob_capture.depth_levels),
+        rth_only=storage.rth_only if rth_only is None else bool(rth_only),
         session_id=capture_session_id,
         logger=logger,
         client=client,
@@ -677,7 +763,13 @@ def run_lob_capture_loop(
     return collector.run(max_events=max_events)
 
 
-def _build_lob_client(settings: Settings, logger) -> IBClient:
+def _build_lob_client(settings: Settings, logger, *, provider: str) -> LOBMarketDataClient:
+    if provider == "kraken":
+        return KrakenLOBClient(
+            websocket_url=settings.kraken_lob.websocket_url,
+            logger=logger,
+            timeout=settings.request_timeout_seconds,
+        )
     return IBClient(
         host=settings.ib_host,
         port=settings.ib_port,
@@ -691,14 +783,15 @@ def _build_lob_client(settings: Settings, logger) -> IBClient:
     )
 
 
-def _lob_state_path(settings: Settings, symbol: str) -> Path:
-    root = Path(settings.lob_capture.state_root)
+def _lob_state_path(settings: Settings, symbol: str, *, provider: str = "ibkr") -> Path:
+    root = Path(_lob_provider_storage(settings, provider).state_root)
     root.mkdir(parents=True, exist_ok=True)
-    return root / f"{symbol.upper()}.json"
+    return root / f"{_symbol_path_token(symbol)}.json"
 
 
 def _lob_session_path(settings: Settings, session_id: str) -> Path:
-    root = Path(settings.lob_capture.session_root)
+    provider = _provider_from_session_id(session_id)
+    root = Path(_lob_provider_storage(settings, provider).session_root)
     root.mkdir(parents=True, exist_ok=True)
     return root / f"{session_id}.json"
 
@@ -713,8 +806,8 @@ def _update_lob_manifest(path: Path, frame: pd.DataFrame, output_path: Path) -> 
         int(payload.get("observed_levels", 0)),
     )
     manifest = {
-        "provider": "ibkr",
-        "source": "ibkr_market_depth",
+        "provider": str(frame.get("provider", pd.Series(["ibkr"])).iloc[0]),
+        "source": str(frame.get("source", pd.Series(["ibkr_market_depth"])).iloc[0]),
         "symbol": str(frame["symbol"].iloc[0]).upper(),
         "session_date": str(frame["session_date"].iloc[0]),
         "row_count": int(payload.get("row_count", 0)) + int(len(frame)),
@@ -750,3 +843,59 @@ def _pid_is_alive(pid: int) -> bool:
         os.kill(pid, 0)
         return True
     return False
+
+
+def _normalize_provider(provider: str) -> str:
+    normalized = str(provider or "ibkr").strip().lower()
+    if normalized not in {"ibkr", "kraken"}:
+        raise ValueError(f"Unsupported LOB provider: {provider!r}. Use 'ibkr' or 'kraken'.")
+    return normalized
+
+
+def _normalize_lob_symbol(symbol: str, provider: str) -> str:
+    value = str(symbol).strip().upper()
+    if provider == "kraken":
+        return value.replace("-", "/")
+    return value
+
+
+def _symbol_path_token(symbol: str) -> str:
+    return str(symbol).upper().replace("/", "_").replace("-", "_").replace(" ", "_")
+
+
+def _provider_from_session_id(session_id: str) -> str:
+    parts = session_id.split("-")
+    if len(parts) >= 3 and parts[0] == "lob" and parts[1] in {"ibkr", "kraken"}:
+        return parts[1]
+    return "ibkr"
+
+
+def _lob_provider_storage(settings: Settings, provider: str) -> LOBProviderStorage:
+    resolved = _normalize_provider(provider)
+    if resolved == "kraken":
+        return LOBProviderStorage(
+            provider="kraken",
+            source="kraken_spot_book",
+            output_root=settings.kraken_lob.output_root,
+            state_root=settings.kraken_lob.state_root,
+            session_root=settings.kraken_lob.session_root,
+            batch_size=settings.kraken_lob.batch_size,
+            flush_interval_seconds=settings.kraken_lob.flush_interval_seconds,
+            rth_only=False,
+            reconnect_delay_seconds=settings.kraken_lob.reconnect_delay_seconds,
+            max_reconnect_attempts=settings.kraken_lob.max_reconnect_attempts,
+            startup_wait_seconds=settings.kraken_lob.startup_wait_seconds,
+        )
+    return LOBProviderStorage(
+        provider="ibkr",
+        source="ibkr_market_depth",
+        output_root=settings.lob_capture.output_root,
+        state_root=settings.lob_capture.state_root,
+        session_root=settings.lob_capture.session_root,
+        batch_size=settings.lob_capture.batch_size,
+        flush_interval_seconds=settings.lob_capture.flush_interval_seconds,
+        rth_only=settings.lob_capture.rth_only,
+        reconnect_delay_seconds=settings.lob_capture.reconnect_delay_seconds,
+        max_reconnect_attempts=settings.lob_capture.max_reconnect_attempts,
+        startup_wait_seconds=settings.lob_capture.startup_wait_seconds,
+    )
