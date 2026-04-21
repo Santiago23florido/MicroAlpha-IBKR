@@ -10,3 +10,5 @@ torch
 streamlit
 pandas-market-calendars
 pytest
+websocket-client
+certifi

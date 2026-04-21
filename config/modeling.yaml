@@ -1,4 +1,15 @@
 defaults:
+  lob:
+    dataset_type: lob_depth
+    depth_levels: 10
+    sequence_length: 100
+    horizon_events_options: [10, 20, 50]
+    default_horizon_events: 10
+    stationary_threshold_bps: 2.0
+    train_batch_size: 32
+    eval_batch_size: 64
+    normalization: price_rel_to_last_mid_bps_and_log1p_sizes
+
   dataset:
     train_ratio: 0.7
     validation_ratio: 0.15

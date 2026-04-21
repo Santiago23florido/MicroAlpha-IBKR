@@ -29,12 +29,34 @@ FEATURE_COLUMNS = [
     "estimated_cost_bps",
 ]
 
+BAR_FEATURE_COLUMNS = [
+    "mid_price",
+    "return_1_bps",
+    "return_3_bps",
+    "return_10_bps",
+    "rolling_volatility_5",
+    "rolling_volatility_15",
+    "hl_range_bps",
+    "open_close_return_bps",
+    "close_position_in_bar",
+    "orb_range_width_bps",
+    "price_vs_orb_high_bps",
+    "price_vs_orb_low_bps",
+    "price_vs_orb_mid_bps",
+    "breakout_distance_bps",
+    "is_primary_session",
+    "is_secondary_session",
+    "estimated_cost_bps",
+]
+
 
 @dataclass(frozen=True)
 class PreparedDataset:
     frame: pd.DataFrame
     feature_columns: list[str]
     class_threshold_bps: float
+    target_horizon_minutes: int
+    training_profile: str
 
 
 def prepare_training_dataframe(raw_frame: pd.DataFrame, settings: Settings) -> PreparedDataset:
@@ -79,37 +101,69 @@ def prepare_training_dataframe(raw_frame: pd.DataFrame, settings: Settings) -> P
             (total_bid_depth + total_ask_depth) > 0,
             (total_bid_depth - total_ask_depth) / (total_bid_depth + total_ask_depth),
             0.0,
-        )
+    )
     else:
         frame["multi_level_ofi"] = 0.0
     frame["return_1_bps"] = frame["mid_price"].pct_change().fillna(0.0) * 10000.0
     frame["return_3_bps"] = frame["mid_price"].pct_change(3).fillna(0.0) * 10000.0
+    frame["return_10_bps"] = frame["mid_price"].pct_change(10).fillna(0.0) * 10000.0
     frame["rolling_volatility_5"] = frame["return_1_bps"].rolling(5).std().fillna(0.0)
+    frame["rolling_volatility_15"] = frame["return_1_bps"].rolling(15).std().fillna(0.0)
     frame["recent_volume_imbalance"] = frame["depth_imbalance"]
+    frame["hl_range_bps"] = np.where(
+        frame["mid_price"] > 0,
+        (frame["high"] - frame["low"]) / frame["mid_price"] * 10000.0,
+        0.0,
+    )
+    frame["open_close_return_bps"] = np.where(
+        frame["open"] > 0,
+        (frame["close"] / frame["open"] - 1.0) * 10000.0,
+        0.0,
+    )
+    frame["close_position_in_bar"] = np.where(
+        (frame["high"] - frame["low"]) > 0,
+        (frame["close"] - frame["low"]) / (frame["high"] - frame["low"]),
+        0.5,
+    )
 
     frame = _add_orb_context(frame, settings)
-    frame["estimated_cost_bps"] = frame["spread_bps"].fillna(0.0) + 0.5
+    training_profile = _resolve_training_profile(frame)
+    if training_profile == "bar_bootstrap":
+        frame["estimated_cost_bps"] = np.maximum(frame["spread_bps"].fillna(0.0), settings.trading.cost_buffer_bps)
+        target_horizon_minutes = max(settings.models.target_horizon_minutes, 10)
+        class_threshold_bps = max(4.0, settings.trading.cost_buffer_bps * 1.5)
+        selected_feature_columns = list(BAR_FEATURE_COLUMNS)
+    else:
+        frame["estimated_cost_bps"] = frame["spread_bps"].fillna(0.0) + 0.5
+        target_horizon_minutes = settings.models.target_horizon_minutes
+        class_threshold_bps = max(1.0, settings.trading.cost_buffer_bps / 2.0)
+        selected_feature_columns = list(FEATURE_COLUMNS)
 
-    horizon = settings.models.target_horizon_minutes
-    frame["future_mid_price"] = frame["mid_price"].shift(-horizon)
+    frame["future_mid_price"] = frame["mid_price"].shift(-target_horizon_minutes)
     frame["future_return_bps"] = (
         (frame["future_mid_price"] / frame["mid_price"]) - 1.0
     ) * 10000.0
-    class_threshold_bps = max(1.0, settings.trading.cost_buffer_bps / 2.0)
+    frame["future_net_return_bps"] = np.where(
+        frame["future_return_bps"].notna(),
+        frame["future_return_bps"] - (np.sign(frame["future_return_bps"]) * frame["estimated_cost_bps"]),
+        np.nan,
+    )
     frame["target_class"] = np.select(
         [
-            frame["future_return_bps"] > class_threshold_bps,
-            frame["future_return_bps"] < -class_threshold_bps,
+            frame["future_net_return_bps"] > class_threshold_bps,
+            frame["future_net_return_bps"] < -class_threshold_bps,
         ],
         [1, -1],
         default=0,
     )
     frame = frame.dropna(subset=["future_return_bps"]).reset_index(drop=True)
-    frame[FEATURE_COLUMNS] = frame[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    frame[selected_feature_columns] = frame[selected_feature_columns].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return PreparedDataset(
         frame=frame,
-        feature_columns=list(FEATURE_COLUMNS),
+        feature_columns=selected_feature_columns,
         class_threshold_bps=class_threshold_bps,
+        target_horizon_minutes=target_horizon_minutes,
+        training_profile=training_profile,
     )
 
 
@@ -168,3 +222,22 @@ def _add_orb_context(frame: pd.DataFrame, settings: Settings) -> pd.DataFrame:
         & (frame["session_time"] <= settings.session.secondary_session_end)
     ).astype(float)
     return frame
+
+
+def _resolve_training_profile(frame: pd.DataFrame) -> str:
+    provider = str(frame.get("provider", pd.Series([""])).iloc[0]).lower() if "provider" in frame.columns else ""
+    what_to_show = (
+        str(frame.get("what_to_show", pd.Series([""])).iloc[0]).upper() if "what_to_show" in frame.columns else ""
+    )
+    synthetic_bid_ask = bool(frame.get("synthetic_bid_ask_flag", pd.Series([False])).astype(bool).any()) if "synthetic_bid_ask_flag" in frame.columns else False
+    synthetic_depth = bool(frame.get("synthetic_depth_flag", pd.Series([False])).astype(bool).any()) if "synthetic_depth_flag" in frame.columns else False
+    invalid_trade_fields = False
+    if "volume" in frame.columns:
+        invalid_trade_fields = invalid_trade_fields or pd.to_numeric(frame["volume"], errors="coerce").fillna(-1).le(0).all()
+    if "count" in frame.columns:
+        invalid_trade_fields = invalid_trade_fields or pd.to_numeric(frame["count"], errors="coerce").fillna(-1).lt(0).all()
+    if provider == "ibkr" and what_to_show == "MIDPOINT":
+        return "bar_bootstrap"
+    if synthetic_bid_ask or synthetic_depth or invalid_trade_fields:
+        return "bar_bootstrap"
+    return "microstructure"
