@@ -233,7 +233,12 @@ class KrakenLOBSettings:
     startup_wait_seconds: float = 5.0
     paper_fee_bps: float = 26.0
     paper_initial_cash_eur: float = 10000.0
+    paper_initial_cash_mode: str = "dynamic_minimum"
+    paper_min_cash_buffer_bps: float = 1000.0
+    paper_position_fraction: float = 0.25
     paper_slippage_bps: float = 2.0
+    paper_ui_refresh_seconds: float = 2.0
+    paper_ui_port: int = 8502
 
 
 @dataclass(frozen=True)
@@ -1021,10 +1026,34 @@ def load_settings(
                 "KRAKEN_PAPER_INITIAL_CASH_EUR",
                 float(kraken_lob_defaults.get("paper_initial_cash_eur", 10000.0)),
             ),
+            paper_initial_cash_mode=runtime_env.get(
+                "KRAKEN_PAPER_INITIAL_CASH_MODE",
+                str(kraken_lob_defaults.get("paper_initial_cash_mode", "dynamic_minimum")),
+            ),
+            paper_min_cash_buffer_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_MIN_CASH_BUFFER_BPS",
+                float(kraken_lob_defaults.get("paper_min_cash_buffer_bps", 1000.0)),
+            ),
+            paper_position_fraction=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_POSITION_FRACTION",
+                float(kraken_lob_defaults.get("paper_position_fraction", 0.25)),
+            ),
             paper_slippage_bps=_parse_float(
                 runtime_env,
                 "KRAKEN_PAPER_SLIPPAGE_BPS",
                 float(kraken_lob_defaults.get("paper_slippage_bps", 2.0)),
+            ),
+            paper_ui_refresh_seconds=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_UI_REFRESH_SECONDS",
+                float(kraken_lob_defaults.get("paper_ui_refresh_seconds", 2.0)),
+            ),
+            paper_ui_port=_parse_int(
+                runtime_env,
+                "KRAKEN_PAPER_UI_PORT",
+                int(kraken_lob_defaults.get("paper_ui_port", 8502)),
             ),
         ),
         feature_pipeline=FeaturePipelineSettings(

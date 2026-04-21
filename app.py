@@ -279,6 +279,18 @@ def build_parser() -> argparse.ArgumentParser:
     kraken_paper_parser.add_argument("--duration-minutes", type=float, default=60.0, help="Latest captured minutes to replay.")
     kraken_paper_parser.add_argument("--from-date", help="Optional lower session-date bound in YYYY-MM-DD.")
 
+    kraken_paper_ui_parser = subparsers.add_parser(
+        "run-kraken-paper-ui",
+        help="Launch a dedicated Streamlit broker-style UI for the local Kraken paper simulator.",
+    )
+    kraken_paper_ui_parser.add_argument("--symbol", default="BTC/EUR", help="Kraken pair to simulate.")
+    kraken_paper_ui_parser.add_argument("--model-artifact", default="active", help="'active', artifact id, or artifact .pt path.")
+    kraken_paper_ui_parser.add_argument("--mode", choices=["live", "replay"], default="live", help="UI mode.")
+    kraken_paper_ui_parser.add_argument("--duration-minutes", type=float, default=60.0, help="Latest captured minutes to replay.")
+    kraken_paper_ui_parser.add_argument("--from-date", help="Optional lower session-date bound in YYYY-MM-DD.")
+    kraken_paper_ui_parser.add_argument("--host", help="Override the Streamlit host.")
+    kraken_paper_ui_parser.add_argument("--port", type=int, help="Override the Streamlit port.")
+
     train_baseline_parser = subparsers.add_parser(
         "train-baseline",
         help="Train one configurable phase 5 baseline/model variant from labeled feature data.",
@@ -985,6 +997,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "run-kraken-paper-ui":
+            return launch_kraken_paper_ui(
+                settings,
+                env_file=args.env_file,
+                config_dir=args.config_dir,
+                environment=args.environment,
+                symbol=args.symbol,
+                model_artifact=args.model_artifact,
+                mode=args.mode,
+                duration_minutes=args.duration_minutes,
+                from_date=args.from_date,
+                host=args.host,
+                port=args.port,
+            )
+
         if args.command == "train-baseline":
             print_result(
                 train_baseline_variant(
@@ -1662,6 +1689,60 @@ def launch_dashboard(
         env["MICROALPHA_ENV"] = environment
 
     print(f"Launching dashboard at {browser_url}", flush=True)
+    print(f"If the browser does not open, open {browser_url} manually.", flush=True)
+    _open_browser_soon(browser_url)
+    return subprocess.run(command, env=env, check=False).returncode
+
+
+def launch_kraken_paper_ui(
+    settings: Settings,
+    *,
+    env_file: str | None = None,
+    config_dir: str | None = None,
+    environment: str | None = None,
+    symbol: str = "BTC/EUR",
+    model_artifact: str = "active",
+    mode: str = "live",
+    duration_minutes: float = 60.0,
+    from_date: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
+) -> int:
+    bind_host = host or settings.ui.host
+    bind_port = port or int(settings.kraken_lob.paper_ui_port)
+    browser_host = "127.0.0.1" if bind_host in {"0.0.0.0", "127.0.0.1"} else bind_host
+    browser_url = f"http://{browser_host}:{bind_port}"
+
+    command = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        "ui/kraken_paper_app.py",
+        "--server.address",
+        bind_host,
+        "--server.port",
+        str(bind_port),
+        "--server.headless",
+        "true",
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+    env = os.environ.copy()
+    if env_file:
+        env["MICROALPHA_ENV_FILE"] = str(Path(env_file).resolve())
+    if config_dir:
+        env["MICROALPHA_CONFIG_DIR"] = str(Path(config_dir).resolve())
+    if environment:
+        env["MICROALPHA_ENV"] = environment
+    env["KRAKEN_PAPER_UI_SYMBOL"] = symbol
+    env["KRAKEN_PAPER_UI_MODEL_ARTIFACT"] = model_artifact
+    env["KRAKEN_PAPER_UI_MODE"] = mode
+    env["KRAKEN_PAPER_UI_DURATION_MINUTES"] = str(duration_minutes)
+    if from_date:
+        env["KRAKEN_PAPER_UI_FROM_DATE"] = from_date
+
+    print(f"Launching Kraken paper broker UI at {browser_url}", flush=True)
     print(f"If the browser does not open, open {browser_url} manually.", flush=True)
     _open_browser_soon(browser_url)
     return subprocess.run(command, env=env, check=False).returncode

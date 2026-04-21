@@ -116,7 +116,12 @@ defaults:
     startup_wait_seconds: 5.0
     paper_fee_bps: 26.0
     paper_initial_cash_eur: 10000.0
+    paper_initial_cash_mode: dynamic_minimum
+    paper_min_cash_buffer_bps: 1000.0
+    paper_position_fraction: 0.25
     paper_slippage_bps: 2.0
+    paper_ui_refresh_seconds: 2.0
+    paper_ui_port: 8502
   feature_pipeline:
     gap_threshold_seconds: 120
     max_abs_spread_bps: 250.0

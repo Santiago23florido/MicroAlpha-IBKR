@@ -1507,7 +1507,54 @@ Kraken Spot does not provide a free official paper-trading environment equivalen
 python app.py run-kraken-paper-sim --symbol BTC/EUR --model-artifact active --duration-minutes 60
 ```
 
-The report is written under `data/reports/lob/kraken_paper/`.
+The report is written under `data/reports/lob/kraken_paper/<SYMBOL>/<RUN_ID>/` and includes:
+
+- `summary.json`
+- `trades.csv`
+- `decisions.csv`
+- `equity.csv`
+- `state.json`
+
+The simulator is spot-only, long-only, no-margin, and applies the same configured signal threshold, fees, slippage, max trades, daily loss, and max open position limits.
+
+### Kraken Paper Broker UI
+
+Launch the dedicated Streamlit broker-style UI:
+
+```bash
+python app.py run-kraken-paper-ui --symbol BTC/EUR --model-artifact active --mode live --duration-minutes 60
+```
+
+Open the printed local URL, normally:
+
+```text
+http://127.0.0.1:8502
+```
+
+The UI shows:
+
+- simulated EUR cash, BTC position, equity, PnL, fees, and trades
+- latest captured 10-level Kraken order book
+- latest model class, confidence, threshold, action, and block reason
+- risk policy values used by the simulator
+- equity curve, trade history, and decision history
+
+`--mode live` rereads local Kraken LOB chunks on each refresh. If `start-lob-capture --provider kraken` is running, the UI follows newly appended data. It still sends no real orders.
+
+Kraken paper settings:
+
+```bash
+KRAKEN_PAPER_INITIAL_CASH_MODE=dynamic_minimum
+KRAKEN_PAPER_INITIAL_CASH_EUR=10000.0
+KRAKEN_PAPER_MIN_CASH_BUFFER_BPS=1000
+KRAKEN_PAPER_POSITION_FRACTION=0.25
+KRAKEN_PAPER_FEE_BPS=26.0
+KRAKEN_PAPER_SLIPPAGE_BPS=2.0
+KRAKEN_PAPER_UI_REFRESH_SECONDS=2
+KRAKEN_PAPER_UI_PORT=8502
+```
+
+`dynamic_minimum` calls Kraken public `AssetPairs` and `Ticker` endpoints to estimate the smallest viable starting cash for the configured position fraction. If Kraken metadata is unavailable, the simulator falls back to the documented BTC minimum order size and shows a warning in the UI.
 
 ### IBKR Variant
 

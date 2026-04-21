@@ -7,7 +7,7 @@ import pandas as pd
 
 from config import load_settings
 from data.lob_dataset import build_lob_dataset
-from execution.kraken_paper import run_kraken_paper_sim
+from execution.kraken_paper import KrakenMarketMinimum, build_kraken_paper_policy, run_kraken_paper_sim
 from ingestion.kraken_lob_client import KrakenLOBClient
 from ingestion.lob_capture import run_lob_capture_loop
 from ingestion.lob_reconstruction import LOBBookState, LOBDepthUpdate
@@ -261,6 +261,42 @@ def test_kraken_lob_capture_dataset_training_and_paper_sim(tmp_path: Path) -> No
     assert sim_payload["status"] == "ok"
     assert sim_payload["provider"] == "kraken"
     assert sim_payload["note"].startswith("Local simulation only")
+    assert sim_payload["policy"]["initial_cash_mode"] == "fixed"
+    assert Path(sim_payload["decisions_path"]).exists()
+    assert Path(sim_payload["equity_path"]).exists()
+
+
+def test_kraken_dynamic_minimum_cash_policy(tmp_path: Path) -> None:
+    settings = _build_temp_settings(tmp_path)
+    settings = replace(
+        settings,
+        kraken_lob=replace(
+            settings.kraken_lob,
+            paper_initial_cash_mode="dynamic_minimum",
+            paper_position_fraction=0.25,
+            paper_min_cash_buffer_bps=1000.0,
+        ),
+    )
+
+    def fake_minimum(symbol: str, latest_price: float | None) -> KrakenMarketMinimum:
+        return KrakenMarketMinimum(
+            symbol=symbol,
+            pair_key="XXBTZEUR",
+            minimum_order_base=0.00005,
+            price_eur=100000.0,
+            source="mock",
+        )
+
+    policy = build_kraken_paper_policy(
+        settings,
+        symbol="BTC/EUR",
+        latest_price=100000.0,
+        market_minimum_fetcher=fake_minimum,
+    )
+
+    assert policy.initial_cash_mode == "dynamic_minimum"
+    assert policy.initial_cash_eur == 22.0
+    assert policy.minimum_order_notional_eur == 5.0
 
 
 def _build_temp_settings(tmp_path: Path):
@@ -317,6 +353,8 @@ def _build_temp_settings(tmp_path: Path):
         flush_interval_seconds=0.1,
         paper_fee_bps=26.0,
         paper_initial_cash_eur=1000.0,
+        paper_initial_cash_mode="fixed",
+        paper_position_fraction=0.25,
         paper_slippage_bps=2.0,
     )
     return replace(

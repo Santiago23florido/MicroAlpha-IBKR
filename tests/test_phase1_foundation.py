@@ -46,7 +46,7 @@ def test_phase1_parser_exposes_required_commands() -> None:
     parser = build_parser()
     help_text = parser.format_help()
 
-    for command in ["collect", "train", "backtest", "run-session", "dashboard", "healthcheck"]:
+    for command in ["collect", "train", "backtest", "run-session", "dashboard", "run-kraken-paper-ui", "healthcheck"]:
         assert command in help_text
 
 
