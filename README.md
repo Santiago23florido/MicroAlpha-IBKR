@@ -1615,6 +1615,83 @@ This is the correct direction for a DeepLOB-style model, but it is still not ide
 - here you build the dataset **forward in time** from live provider updates
 - model quality will depend heavily on the actual depth feed quality, observed levels, and continuity of your live capture sessions
 
+## Strategy Upgrade: Multi-Alpha Regime-Aware Decisions
+
+The Phase 6 decision layer now uses a conservative multi-alpha framework instead of relying on a single ORB/breakout signal. The goal is better trade selection and lower overtrading, not a fixed daily-return promise.
+
+Implemented alpha families:
+
+- `orb_continuation`: keeps the opening-range breakout idea, but only in clean breakout/trend regimes with sufficient relative volume and model direction confirmation.
+- `vwap_mean_reversion`: looks for intraday reversion toward VWAP when price is extended and the regime is range/mean-reversion friendly.
+- `late_session_alpha`: selectively allows late-session directional trades when recent return, volume, and model prediction agree.
+- `low_edge_no_trade_filter`: blocks trading in high-cost, low-liquidity, noisy-open, or low-edge midday contexts.
+
+The regime detector labels each row with a structured context such as:
+
+- `trend_day_candidate`
+- `range_day_candidate`
+- `low_liquidity_regime`
+- `high_cost_regime`
+- `noisy_open`
+- `mean_reversion_regime`
+- `breakout_regime`
+- `low_edge_midday`
+
+The decision output includes:
+
+- `selected_alpha`
+- `regime`
+- `expected_return_bps`
+- `conservative_return_bps`
+- `expected_cost_bps`
+- `net_edge_bps`
+- `reasons`
+
+Conservative mode uses lower/upper quantiles when the active model exposes distributional predictions. If quantiles are not available, it falls back to the point prediction but still requires alpha agreement, cost limits, spread limits, risk checks, and minimum net edge.
+
+Strategy configuration lives in `config/phase6.yaml` and can be overridden with:
+
+```bash
+ENABLED_ALPHAS=low_edge_no_trade_filter,orb_continuation,vwap_mean_reversion,late_session_alpha
+ALPHA_PRIORITY_ORDER=low_edge_no_trade_filter,orb_continuation,vwap_mean_reversion,late_session_alpha
+ALPHA_ROUTER_MODE=priority_conservative
+REGIME_DETECTION_ENABLED=true
+CONSERVATIVE_DECISION_MODE=true
+NO_TRADE_FILTERS=high_cost_regime,low_liquidity_regime,noisy_open,low_edge_midday
+```
+
+Inspection commands:
+
+```bash
+python app.py inspect-regimes --symbols SPY --limit 100
+python app.py inspect-alpha-routing --symbols SPY --limit 100
+python app.py compare-alpha-families --symbols SPY --limit 500
+```
+
+Operational commands that now include alpha/regime traces:
+
+```bash
+python app.py compare-model-variants --profile default
+python app.py run-phase5-experiments --profile default
+python app.py show-active-model
+python app.py run-decisions-offline --symbols SPY --limit 200
+python app.py run-paper-sim-offline --symbols SPY --limit 200
+python app.py run-shadow-session --symbols SPY --latest-per-symbol 50
+```
+
+Leaderboard rows now include alpha/regime-oriented columns and economic/selectivity proxies:
+
+- `alpha_family`
+- `regime_mode`
+- `target_family`
+- `trade_selectivity`
+- `no_trade_rate`
+- `average_net_edge_bps`
+- `top_signal_hit_rate`
+- `drawdown_proxy_bps`
+
+This upgrade should improve risk/return profile mainly by filtering low-quality contexts and requiring net-of-cost edge. It does not increase leverage, relax risk limits, or guarantee profitability.
+
 ## Next Phase
 
 The next phase should build on this by adding:

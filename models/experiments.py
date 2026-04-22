@@ -433,12 +433,18 @@ def build_leaderboard_row(
     )
     validation_metrics = metrics["validation"]
     test_metrics = metrics["test"]
+    validation_economics = dict(validation_metrics.get("economics", {}))
+    test_economics = dict(test_metrics.get("economics", {}))
+    validation_selectivity = _selectivity_from_economics(validation_metrics, validation_economics)
     return {
         "run_id": run_id,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model_name": model_name,
         "model_type": model_name,
         "target_mode": target_mode,
+        "target_family": _target_family(target_config),
+        "alpha_family": "multi_alpha_intraday",
+        "regime_mode": "regime_aware_conservative",
         "feature_set": feature_set_name,
         "hyperparameters": hyperparameters,
         "split_config": dataset.split_config,
@@ -448,6 +454,13 @@ def build_leaderboard_row(
         "test_range": [dataset.test.dates[0], dataset.test.dates[-1]],
         "validation_metrics": validation_metrics,
         "test_metrics": test_metrics,
+        "validation_economic_metrics": validation_economics,
+        "test_economic_metrics": test_economics,
+        "trade_selectivity": validation_selectivity,
+        "no_trade_rate": None if validation_selectivity is None else float(1.0 - validation_selectivity),
+        "average_net_edge_bps": _optional_metric(validation_economics, "top_decile_mean_net_return_bps"),
+        "top_signal_hit_rate": _optional_metric(validation_economics, "top_signal_hit_rate"),
+        "drawdown_proxy_bps": _drawdown_proxy(validation_economics),
         "artifact_dir": str(artifact_dir),
         "ranking_score": _ranking_score(target_config, validation_metrics),
     }
@@ -489,6 +502,44 @@ def _ranking_score(target_config: TargetConfig, validation_metrics: dict[str, An
             return -float(sum(pinball.values()) / max(len(pinball), 1))
         return -float(validation_metrics.get("rmse_bps", 0.0))
     return -float(validation_metrics.get("rmse_bps", 0.0))
+
+
+def _target_family(target_config: TargetConfig) -> str:
+    if target_config.task_type == "quantile_regression":
+        return "quantile_distributional"
+    if target_config.task_type in {"ordinal", "distribution_bins"}:
+        return "ordinal_distributional"
+    if target_config.cost_adjustment_bps or target_config.cost_adjustment_multiplier:
+        return "net_of_cost"
+    return str(target_config.task_type)
+
+
+def _selectivity_from_economics(validation_metrics: dict[str, Any], economics: dict[str, Any]) -> float | None:
+    rows = validation_metrics.get("rows")
+    top_count = economics.get("top_decile_count")
+    try:
+        rows_float = float(rows)
+        top_float = float(top_count)
+    except (TypeError, ValueError):
+        return None
+    if rows_float <= 0:
+        return None
+    return float(min(max(top_float / rows_float, 0.0), 1.0))
+
+
+def _optional_metric(metrics: dict[str, Any], key: str) -> float | None:
+    value = metrics.get(key)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _drawdown_proxy(economics: dict[str, Any]) -> float | None:
+    bottom = _optional_metric(economics, "bottom_decile_mean_future_return_bps")
+    if bottom is None:
+        return None
+    return float(min(bottom, 0.0))
 
 
 def _resolve_run_record(
