@@ -91,6 +91,7 @@ from ops.orchestrator import (
 )
 from ops.runtime_manager import restart_runtime, service_status, start_runtime, stop_runtime
 from shadow.session import run_shadow_session
+from strategy.inspection import compare_alpha_families, inspect_alpha_routing, inspect_regimes
 from validation.paper_validation import compare_paper_sessions, reconcile_and_report, run_paper_validation_session
 from validation.readiness import generate_readiness_report
 
@@ -549,6 +550,30 @@ def build_parser() -> argparse.ArgumentParser:
     paper_offline_parser.add_argument("--feature-root", help="Override the feature parquet root.")
     paper_offline_parser.add_argument("--label-root", help="Override the label parquet root for offline realized-outcome joins.")
     paper_offline_parser.add_argument("--decision-log-path", help="Override the JSONL decision log path.")
+
+    inspect_regimes_parser = subparsers.add_parser(
+        "inspect-regimes",
+        help="Inspect detected intraday regimes on the latest feature rows without submitting orders.",
+    )
+    inspect_regimes_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    inspect_regimes_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    inspect_regimes_parser.add_argument("--limit", type=int, default=50, help="Latest feature rows to inspect.")
+
+    inspect_alpha_parser = subparsers.add_parser(
+        "inspect-alpha-routing",
+        help="Run inference + decision routing and explain selected/blocked alphas.",
+    )
+    inspect_alpha_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    inspect_alpha_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    inspect_alpha_parser.add_argument("--limit", type=int, default=50, help="Latest feature rows to inspect.")
+
+    compare_alpha_parser = subparsers.add_parser(
+        "compare-alpha-families",
+        help="Summarize alpha activation, no-trade rate, and average net edge by alpha/regime.",
+    )
+    compare_alpha_parser.add_argument("--symbols", nargs="+", help="Optional symbol filter.")
+    compare_alpha_parser.add_argument("--feature-root", help="Override the feature parquet root.")
+    compare_alpha_parser.add_argument("--limit", type=int, default=200, help="Latest feature rows to compare.")
 
     evaluate_performance_parser = subparsers.add_parser(
         "evaluate-performance",
@@ -1379,6 +1404,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                     feature_root=args.feature_root,
                     label_root=args.label_root,
                     decision_log_path=args.decision_log_path,
+                )
+            )
+            return 0
+
+        if args.command == "inspect-regimes":
+            print_result(
+                inspect_regimes(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    limit=args.limit,
+                )
+            )
+            return 0
+
+        if args.command == "inspect-alpha-routing":
+            print_result(
+                inspect_alpha_routing(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    limit=args.limit,
+                )
+            )
+            return 0
+
+        if args.command == "compare-alpha-families":
+            print_result(
+                compare_alpha_families(
+                    settings,
+                    symbols=args.symbols,
+                    feature_root=args.feature_root,
+                    limit=args.limit,
                 )
             )
             return 0

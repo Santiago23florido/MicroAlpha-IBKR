@@ -289,7 +289,7 @@ def _execute_phase7_run(
         position_manager=position_manager,
     )
     order_manager.restore_orders(previous_state.get("orders", []))
-    decision_engine = DecisionEngine(phase6.decision, phase6.sizing)
+    decision_engine = DecisionEngine(phase6.decision, phase6.sizing, phase6.strategy)
     risk_engine = OperationalRiskEngine(phase6.risk)
     risk_state = _restore_risk_state(previous_state.get("risk_state"))
     decision_store = DecisionLogStore(decision_log_path, enabled=phase6.logging.enabled)
@@ -380,6 +380,9 @@ def _execute_phase7_run(
                 "expected_return_bps": final_decision.get("expected_return_bps"),
                 "expected_cost_bps": final_decision.get("expected_cost_bps"),
                 "net_edge_bps": final_decision.get("net_edge_bps"),
+                "conservative_return_bps": final_decision.get("conservative_return_bps"),
+                "selected_alpha": final_decision.get("selected_alpha"),
+                "regime": final_decision.get("regime"),
                 "action": final_decision.get("action"),
                 "size_suggestion": final_decision.get("size_suggestion"),
                 "blocked_by_risk": final_decision.get("blocked_by_risk"),

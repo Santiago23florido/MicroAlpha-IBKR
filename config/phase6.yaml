@@ -40,6 +40,44 @@ defaults:
     enabled: true
     decision_log_path: data/reports/decisions/decision_log.jsonl
     report_dir: data/reports/phase6
+  strategy:
+    enabled_alphas:
+      - low_edge_no_trade_filter
+      - orb_continuation
+      - vwap_mean_reversion
+      - late_session_alpha
+    alpha_priority_order:
+      - low_edge_no_trade_filter
+      - orb_continuation
+      - vwap_mean_reversion
+      - late_session_alpha
+    alpha_router_mode: priority_conservative
+    regime_detection_enabled: true
+    conservative_decision_mode: true
+    no_trade_filters:
+      - high_cost_regime
+      - low_liquidity_regime
+      - noisy_open
+      - low_edge_midday
+    min_net_edge_bps_by_alpha:
+      orb_continuation: 1.5
+      vwap_mean_reversion: 1.0
+      late_session_alpha: 2.0
+    regime_thresholds:
+      high_spread_bps: 12.0
+      high_cost_bps: 18.0
+      low_relative_volume: 0.65
+      noisy_open_orb_width_bps: 45.0
+      mean_reversion_distance_bps: 12.0
+      low_volatility_bps: 1.5
+      high_volatility_bps: 12.0
+    alpha_specific_thresholds:
+      orb_continuation:
+        min_relative_volume: 0.9
+      vwap_mean_reversion:
+        min_distance_to_vwap_bps: 8.0
+      late_session_alpha:
+        min_predicted_return_bps: 2.0
 
 environments:
   development:

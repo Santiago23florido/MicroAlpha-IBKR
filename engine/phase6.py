@@ -166,7 +166,7 @@ def _execute_operational_run(
     if feature_frame.empty:
         raise ValueError("The input feature frame is empty. Build features before running Phase 6 inference.")
 
-    decision_engine = DecisionEngine(phase6_config.decision, phase6_config.sizing)
+    decision_engine = DecisionEngine(phase6_config.decision, phase6_config.sizing, phase6_config.strategy)
     risk_engine = OperationalRiskEngine(phase6_config.risk)
     decision_store = DecisionLogStore(decision_log_path, enabled=phase6_config.logging.enabled)
     state = OperationalRiskState()
@@ -195,6 +195,9 @@ def _execute_operational_run(
             "expected_return_bps": final_decision.get("expected_return_bps"),
             "expected_cost_bps": final_decision.get("expected_cost_bps"),
             "net_edge_bps": final_decision.get("net_edge_bps"),
+            "conservative_return_bps": final_decision.get("conservative_return_bps"),
+            "selected_alpha": final_decision.get("selected_alpha"),
+            "regime": final_decision.get("regime"),
             "action": final_decision.get("action"),
             "size_suggestion": final_decision.get("size_suggestion"),
             "blocked_by_risk": final_decision.get("blocked_by_risk"),
@@ -237,6 +240,12 @@ def _execute_operational_run(
         "mean_expected_return_bps": _frame_mean(details_frame, "expected_return_bps"),
         "mean_net_edge_bps": _frame_mean(details_frame, "net_edge_bps"),
         "mean_realized_net_return_bps": _frame_mean(details_frame, "realized_net_return_bps"),
+        "no_trade_rate": _rate(details_frame, "action", "NO_TRADE"),
+        "trade_selectivity": 1.0 - (_rate(details_frame, "action", "NO_TRADE") or 0.0),
+        "average_net_edge_bps": _frame_mean(details_frame, "net_edge_bps"),
+        "alpha_activation_count": _value_counts(details_frame, "selected_alpha"),
+        "alpha_block_rate": _alpha_block_rate(details_frame),
+        "regime_distribution": _value_counts(details_frame, "regime"),
     }
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
     logger.info(
@@ -301,6 +310,27 @@ def _frame_mean(frame: pd.DataFrame, column: str) -> float | None:
         return None
     series = pd.to_numeric(frame[column], errors="coerce").dropna()
     return None if series.empty else float(series.mean())
+
+
+def _rate(frame: pd.DataFrame, column: str, value: str) -> float | None:
+    if column not in frame.columns or frame.empty:
+        return None
+    return float((frame[column].astype(str) == value).mean())
+
+
+def _value_counts(frame: pd.DataFrame, column: str) -> dict[str, int]:
+    if column not in frame.columns or frame.empty:
+        return {}
+    return {str(key): int(value) for key, value in frame[column].fillna("unknown").astype(str).value_counts().items()}
+
+
+def _alpha_block_rate(frame: pd.DataFrame) -> float | None:
+    if "selected_alpha" not in frame.columns or "action" not in frame.columns or frame.empty:
+        return None
+    alpha_rows = frame[frame["selected_alpha"].fillna("none").astype(str) != "none"]
+    if alpha_rows.empty:
+        return None
+    return float((alpha_rows["action"].astype(str) == "NO_TRADE").mean())
 
 
 def _coerce_optional_float(value: Any) -> float | None:
