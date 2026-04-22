@@ -1436,7 +1436,8 @@ Important constraints:
 - The capture is **append-only**. Starting a new session adds new chunk files and updates manifests/state; it does not reset prior days.
 - IBKR capture is designed around **SPY**, **10 depth levels**, and **RTH only**.
 - Kraken capture defaults to **BTC/EUR**, **10 depth levels**, and crypto 24/7 session dates.
-- The model target follows the paper-style idea of **future mid-price movement over event horizons** rather than the bar-based net-return target.
+- IBKR datasets keep the paper-style **future mid-price movement** label.
+- Kraken datasets add a **cost-aware net-return label** so `up/down` means the future move is large enough to cover estimated maker fees, slippage, and an edge buffer.
 
 ### Start Live LOB Capture with Kraken
 
@@ -1470,7 +1471,9 @@ This produces an event-based parquet dataset under `data/processed/lob_datasets/
 
 - a manifest JSON
 - a daily summary JSON
-- labels based on future mid-price movement
+- paper-style `target_class`
+- Kraken cost-aware `target_class_cost_aware`
+- intraday context features such as event momentum, rolling volatility, top-level imbalance, and spread regime
 
 ### Train the DeepLOB-like Model on GPU
 
@@ -1482,9 +1485,17 @@ When the dataset is LOB depth data, the `deep` trainer switches to the multileve
 
 - sequence length defaults to `100`
 - depth defaults to `10` levels
-- input shape is `[sequence_length, 4 * depth_levels]`
+- Kraken input includes `[sequence_length, 4 * depth_levels]` plus momentum/spread/imbalance context columns when present
 - training uses CUDA automatically when available
-- saved metadata records provider, dataset type, depth, horizon, normalization, and daily/global metrics
+- saved metadata records provider, dataset type, target mode, depth, horizon, normalization, cost assumptions, and daily/global metrics
+
+For Kraken LOB datasets, the generic command above now resolves to a `deepfolio_lite` family by default. You can force a specific architecture:
+
+```bash
+python app.py train --model-type deep --model-name deepfolio_lite --data-path data/processed/lob_datasets/kraken/BTC_EUR/BTC_EUR_2026-04-21_latest_k10.parquet
+python app.py train --model-type deep --model-name lob_transformer_lite --data-path data/processed/lob_datasets/kraken/BTC_EUR/BTC_EUR_2026-04-21_latest_k10.parquet
+python app.py train --model-type deep --model-name deep_lob_reference_like --data-path data/processed/lob_datasets/kraken/BTC_EUR/BTC_EUR_2026-04-21_latest_k10.parquet
+```
 
 ### Daily Walk-Forward Evaluation
 
@@ -1515,7 +1526,14 @@ The report is written under `data/reports/lob/kraken_paper/<SYMBOL>/<RUN_ID>/` a
 - `equity.csv`
 - `state.json`
 
-The simulator is spot-only, long-only, no-margin, and applies the same configured signal threshold, fees, slippage, max trades, daily loss, and max open position limits.
+The simulator is spot-only, long-only, no-margin, and applies the same configured signal threshold, fees, slippage, max trades, daily loss, and max open position limits. Reported account values are net realistic values:
+
+- `broker_realistic_balance_eur`
+- `net_pnl_eur`
+- `net_pnl_pct`
+- `total_fees_eur`
+
+These are the values to use as the paper result, not gross model movement.
 
 ### Kraken Paper Broker UI
 
@@ -1549,7 +1567,9 @@ KRAKEN_PAPER_INITIAL_CASH_EUR=10000.0
 KRAKEN_PAPER_MIN_CASH_BUFFER_BPS=1000
 KRAKEN_PAPER_POSITION_FRACTION=0.25
 KRAKEN_PAPER_FEE_BPS=26.0
+KRAKEN_PAPER_MAKER_FEE_BPS=25.0
 KRAKEN_PAPER_SLIPPAGE_BPS=2.0
+KRAKEN_PAPER_EDGE_BUFFER_BPS=15.0
 KRAKEN_PAPER_UI_REFRESH_SECONDS=2
 KRAKEN_PAPER_UI_PORT=8502
 ```

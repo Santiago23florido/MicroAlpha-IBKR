@@ -113,14 +113,15 @@ def _render_capture_status(settings: Any, symbol: str) -> None:
 
 def _render_account(payload: dict[str, Any]) -> None:
     st.subheader("Cuenta Simulada")
-    cols = st.columns(6)
+    cols = st.columns(7)
     cols[0].metric("Initial EUR", _money(payload.get("initial_cash_eur")))
     cols[1].metric("Cash EUR", _money(payload.get("final_cash_eur")))
     cols[2].metric("BTC Position", f"{float(payload.get('open_position_qty', 0.0)):.8f}")
-    cols[3].metric("Equity EUR", _money(payload.get("final_equity_eur")))
-    cols[4].metric("PnL EUR", _money(payload.get("pnl_eur")), delta=f"{float(payload.get('pnl_pct', 0.0)) * 100:.3f}%")
-    cols[5].metric("Trades", str(payload.get("trades", 0)))
-    st.caption(payload.get("note", ""))
+    cols[3].metric("Broker Realistic Balance", _money(payload.get("broker_realistic_balance_eur")))
+    cols[4].metric("Net PnL EUR", _money(payload.get("net_pnl_eur")), delta=f"{float(payload.get('net_pnl_pct', 0.0)) * 100:.3f}%")
+    cols[5].metric("Fees EUR", _money(payload.get("total_fees_eur")))
+    cols[6].metric("Trades", str(payload.get("trades", 0)))
+    st.caption(f"{payload.get('note', '')} Result is net of configured fees, spread/slippage assumptions, and open-position mark-to-market.")
     warnings = ((payload.get("policy") or {}).get("warnings") or [])
     for warning in warnings:
         st.warning(warning)
@@ -164,6 +165,8 @@ def _render_risk(payload: dict[str, Any]) -> None:
         {"policy": "minimum_order_base", "value": policy.get("minimum_order_base")},
         {"policy": "minimum_order_notional_eur", "value": policy.get("minimum_order_notional_eur")},
         {"policy": "position_fraction", "value": policy.get("position_fraction")},
+        {"policy": "estimated_roundtrip_cost_bps", "value": policy.get("estimated_roundtrip_cost_bps")},
+        {"policy": "edge_buffer_bps", "value": policy.get("edge_buffer_bps")},
         {"policy": "model_prob_threshold", "value": policy.get("model_prob_threshold")},
         {"policy": "max_trades_per_day", "value": policy.get("max_trades_per_day")},
         {"policy": "max_daily_loss_pct", "value": policy.get("max_daily_loss_pct")},
@@ -187,7 +190,8 @@ def _render_reports(payload: dict[str, Any]) -> None:
     equity = _read_csv(paths.get("equity"))
     if not equity.empty:
         equity["timestamp"] = pd.to_datetime(equity["timestamp"], errors="coerce")
-        st.line_chart(equity.dropna(subset=["timestamp"]).set_index("timestamp")[["equity_eur", "pnl_eur"]])
+        chart_columns = [column for column in ["equity_eur", "net_pnl_eur"] if column in equity.columns]
+        st.line_chart(equity.dropna(subset=["timestamp"]).set_index("timestamp")[chart_columns])
     trades = _read_csv(paths.get("trades"))
     decisions = _read_csv(paths.get("decisions"))
     left, right = st.columns(2)
@@ -205,7 +209,9 @@ def _render_reports(payload: dict[str, Any]) -> None:
             "cash_eur",
             "position_qty",
             "equity_eur",
-            "pnl_eur",
+            "net_pnl_eur",
+            "predicted_return_bps",
+            "required_edge_bps",
         ]
         existing = [column for column in visible_columns if column in decisions.columns]
         st.dataframe(decisions[existing].tail(100), use_container_width=True, hide_index=True)

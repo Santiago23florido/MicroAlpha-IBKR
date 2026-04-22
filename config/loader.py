@@ -232,11 +232,13 @@ class KrakenLOBSettings:
     max_reconnect_attempts: int = 5
     startup_wait_seconds: float = 5.0
     paper_fee_bps: float = 26.0
+    paper_maker_fee_bps: float = 25.0
     paper_initial_cash_eur: float = 10000.0
     paper_initial_cash_mode: str = "dynamic_minimum"
     paper_min_cash_buffer_bps: float = 1000.0
     paper_position_fraction: float = 0.25
     paper_slippage_bps: float = 2.0
+    paper_edge_buffer_bps: float = 15.0
     paper_ui_refresh_seconds: float = 2.0
     paper_ui_port: int = 8502
 
@@ -1021,6 +1023,11 @@ def load_settings(
                 "KRAKEN_PAPER_FEE_BPS",
                 float(kraken_lob_defaults.get("paper_fee_bps", 26.0)),
             ),
+            paper_maker_fee_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_MAKER_FEE_BPS",
+                float(kraken_lob_defaults.get("paper_maker_fee_bps", 25.0)),
+            ),
             paper_initial_cash_eur=_parse_float(
                 runtime_env,
                 "KRAKEN_PAPER_INITIAL_CASH_EUR",
@@ -1044,6 +1051,11 @@ def load_settings(
                 runtime_env,
                 "KRAKEN_PAPER_SLIPPAGE_BPS",
                 float(kraken_lob_defaults.get("paper_slippage_bps", 2.0)),
+            ),
+            paper_edge_buffer_bps=_parse_float(
+                runtime_env,
+                "KRAKEN_PAPER_EDGE_BUFFER_BPS",
+                float(kraken_lob_defaults.get("paper_edge_buffer_bps", 15.0)),
             ),
             paper_ui_refresh_seconds=_parse_float(
                 runtime_env,
