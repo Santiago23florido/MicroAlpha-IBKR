@@ -140,11 +140,38 @@ class DecisionLoggingConfig:
 
 
 @dataclass(frozen=True)
+class StrategyConfig:
+    enabled_alphas: tuple[str, ...]
+    alpha_priority_order: tuple[str, ...]
+    alpha_router_mode: str
+    regime_detection_enabled: bool
+    conservative_decision_mode: bool
+    min_net_edge_bps_by_alpha: dict[str, float]
+    regime_thresholds: dict[str, float]
+    no_trade_filters: tuple[str, ...]
+    alpha_specific_thresholds: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled_alphas": list(self.enabled_alphas),
+            "alpha_priority_order": list(self.alpha_priority_order),
+            "alpha_router_mode": self.alpha_router_mode,
+            "regime_detection_enabled": self.regime_detection_enabled,
+            "conservative_decision_mode": self.conservative_decision_mode,
+            "min_net_edge_bps_by_alpha": self.min_net_edge_bps_by_alpha,
+            "regime_thresholds": self.regime_thresholds,
+            "no_trade_filters": list(self.no_trade_filters),
+            "alpha_specific_thresholds": self.alpha_specific_thresholds,
+        }
+
+
+@dataclass(frozen=True)
 class Phase6Config:
     decision: DecisionConfig
     risk: RiskEngineConfig
     sizing: SizingConfig
     logging: DecisionLoggingConfig
+    strategy: StrategyConfig
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +179,7 @@ class Phase6Config:
             "risk": self.risk.to_dict(),
             "sizing": self.sizing.to_dict(),
             "logging": self.logging.to_dict(),
+            "strategy": self.strategy.to_dict(),
         }
 
 
@@ -168,6 +196,7 @@ def load_phase6_config(settings: Settings) -> Phase6Config:
     risk_payload = merged.get("risk", {})
     sizing_payload = merged.get("sizing", {})
     logging_payload = merged.get("logging", {})
+    strategy_payload = merged.get("strategy", {})
 
     return Phase6Config(
         decision=DecisionConfig(
@@ -272,6 +301,35 @@ def load_phase6_config(settings: Settings) -> Phase6Config:
                 settings,
                 runtime_env.get("PHASE6_REPORT_DIR", str(logging_payload.get("report_dir", "data/reports/phase6"))),
             ),
+        ),
+        strategy=StrategyConfig(
+            enabled_alphas=_env_csv(
+                "ENABLED_ALPHAS",
+                tuple(str(value) for value in strategy_payload.get("enabled_alphas", ("low_edge_no_trade_filter", "orb_continuation", "vwap_mean_reversion", "late_session_alpha"))),
+                runtime_env,
+            ),
+            alpha_priority_order=_env_csv(
+                "ALPHA_PRIORITY_ORDER",
+                tuple(str(value) for value in strategy_payload.get("alpha_priority_order", ("low_edge_no_trade_filter", "orb_continuation", "vwap_mean_reversion", "late_session_alpha"))),
+                runtime_env,
+            ),
+            alpha_router_mode=str(runtime_env.get("ALPHA_ROUTER_MODE", strategy_payload.get("alpha_router_mode", "priority_conservative"))),
+            regime_detection_enabled=_env_bool_local("REGIME_DETECTION_ENABLED", bool(strategy_payload.get("regime_detection_enabled", True))),
+            conservative_decision_mode=_env_bool_local("CONSERVATIVE_DECISION_MODE", bool(strategy_payload.get("conservative_decision_mode", True))),
+            min_net_edge_bps_by_alpha={
+                str(key): float(value)
+                for key, value in dict(strategy_payload.get("min_net_edge_bps_by_alpha", {})).items()
+            },
+            regime_thresholds={
+                str(key): float(value)
+                for key, value in dict(strategy_payload.get("regime_thresholds", {})).items()
+            },
+            no_trade_filters=_env_csv(
+                "NO_TRADE_FILTERS",
+                tuple(str(value) for value in strategy_payload.get("no_trade_filters", ("high_cost_regime", "low_liquidity_regime", "noisy_open", "low_edge_midday"))),
+                runtime_env,
+            ),
+            alpha_specific_thresholds=dict(strategy_payload.get("alpha_specific_thresholds", {})),
         ),
     )
 
@@ -607,6 +665,14 @@ def _env_int(name: str, default: int, env: dict[str, str] | None = None) -> int:
 def _env_float(name: str, default: float, env: dict[str, str] | None = None) -> float:
     raw = (env or os.environ).get(name)
     return default if raw is None else float(raw)
+
+
+def _env_csv(name: str, default: tuple[str, ...], env: dict[str, str] | None = None) -> tuple[str, ...]:
+    raw = (env or os.environ).get(name)
+    if raw is None:
+        return default
+    values = tuple(part.strip() for part in raw.split(",") if part.strip())
+    return values or default
 
 
 def _env_time(name: str, default: str, env: dict[str, str] | None = None) -> time:

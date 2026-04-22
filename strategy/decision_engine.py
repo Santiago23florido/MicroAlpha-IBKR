@@ -8,7 +8,10 @@ import numpy as np
 import pandas as pd
 
 from config.phase6 import DecisionConfig, SizingConfig
+from config.phase6 import StrategyConfig
 from strategy.explainability import build_prediction_reasons, build_threshold_reason
+from strategy.alpha_router import AlphaRouter, AlphaRoutingResult
+from strategy.regime_detector import RegimeDetector, RegimeResult
 
 
 @dataclass(frozen=True)
@@ -23,10 +26,13 @@ class DecisionResult:
     score: float | None
     probability: float | None
     expected_return_bps: float | None
+    conservative_return_bps: float | None
     expected_cost_bps: float
     net_edge_bps: float | None
     size_suggestion: int
     blocked_by_risk: bool
+    selected_alpha: str = "none"
+    regime: str = "unknown"
     reasons: list[str] = field(default_factory=list)
     timestamp: str | None = None
     symbol: str | None = None
@@ -39,9 +45,18 @@ class DecisionResult:
 
 
 class DecisionEngine:
-    def __init__(self, decision_config: DecisionConfig, sizing_config: SizingConfig) -> None:
+    def __init__(self, decision_config: DecisionConfig, sizing_config: SizingConfig, strategy_config: StrategyConfig | None = None) -> None:
         self.decision_config = decision_config
         self.sizing_config = sizing_config
+        self.strategy_config = strategy_config or _default_strategy_config()
+        self.regime_detector = RegimeDetector(self.strategy_config.regime_thresholds)
+        self.alpha_router = AlphaRouter(
+            enabled_alphas=self.strategy_config.enabled_alphas,
+            priority_order=self.strategy_config.alpha_priority_order,
+            min_net_edge_bps_by_alpha=self.strategy_config.min_net_edge_bps_by_alpha,
+            no_trade_filters=self.strategy_config.no_trade_filters,
+            alpha_specific_thresholds=self.strategy_config.alpha_specific_thresholds,
+        )
 
     def decide(self, feature_row: pd.Series | dict[str, Any], prediction: dict[str, Any]) -> DecisionResult:
         row = _as_series(feature_row)
@@ -138,6 +153,29 @@ class DecisionEngine:
                 symbol=symbol,
             )
 
+        regime = self.regime_detector.detect(row) if self.strategy_config.regime_detection_enabled else RegimeResult(
+            regime_name="regime_detection_disabled",
+            confidence=0.0,
+        )
+        routing = self.alpha_router.route(
+            row,
+            prediction,
+            regime,
+            expected_cost_bps=expected_cost_bps,
+        )
+        reasons.extend([f"regime:{regime.regime_name}", *[f"alpha:{reason}" for reason in routing.reasons]])
+        if routing.blocked:
+            return self._build_no_trade(
+                prediction,
+                row,
+                reasons=reasons,
+                expected_cost_bps=expected_cost_bps,
+                timestamp=timestamp,
+                symbol=symbol,
+                regime=regime,
+                routing=routing,
+            )
+
         candidate = self._candidate_from_prediction(prediction, reasons)
         expected_return_bps = candidate["expected_return_bps"]
         confidence = candidate["confidence"]
@@ -151,9 +189,31 @@ class DecisionEngine:
                 timestamp=timestamp,
                 symbol=symbol,
                 confidence=confidence,
+                regime=regime,
+                routing=routing,
+            )
+        if routing.action in {"LONG", "SHORT"} and action != routing.action:
+            candidate["reasons"].append(f"alpha_action_disagrees_with_model:alpha={routing.action}:model={action}")
+            return self._build_no_trade(
+                prediction,
+                row,
+                reasons=candidate["reasons"],
+                expected_cost_bps=expected_cost_bps,
+                timestamp=timestamp,
+                symbol=symbol,
+                expected_return_bps=expected_return_bps,
+                confidence=confidence,
+                regime=regime,
+                routing=routing,
             )
 
-        gross_edge_bps = abs(float(expected_return_bps))
+        conservative_return_bps = _conservative_return_bps(
+            prediction,
+            action=action,
+            fallback=float(expected_return_bps),
+            enabled=self.strategy_config.conservative_decision_mode,
+        )
+        gross_edge_bps = abs(float(conservative_return_bps))
         net_edge_bps = gross_edge_bps - expected_cost_bps
         edge_ok = net_edge_bps >= self.decision_config.net_edge_min_bps
         candidate["reasons"].append(
@@ -174,6 +234,9 @@ class DecisionEngine:
                 expected_return_bps=expected_return_bps,
                 net_edge_bps=net_edge_bps,
                 confidence=confidence,
+                conservative_return_bps=conservative_return_bps,
+                regime=regime,
+                routing=routing,
             )
 
         size_suggestion = _size_suggestion(
@@ -193,10 +256,13 @@ class DecisionEngine:
             score=_optional_float(prediction.get("score")),
             probability=_optional_float(prediction.get("probability")),
             expected_return_bps=_optional_float(expected_return_bps),
+            conservative_return_bps=_optional_float(conservative_return_bps),
             expected_cost_bps=float(expected_cost_bps),
             net_edge_bps=float(net_edge_bps),
             size_suggestion=size_suggestion,
             blocked_by_risk=False,
+            selected_alpha=routing.selected_alpha,
+            regime=regime.regime_name,
             reasons=candidate["reasons"],
             timestamp=timestamp.isoformat() if timestamp is not None else None,
             symbol=symbol,
@@ -208,6 +274,8 @@ class DecisionEngine:
                     for column in self.decision_config.explain_feature_columns
                     if column in row.index
                 },
+                "regime": regime.to_dict(),
+                "alpha_routing": routing.to_dict(),
                 "raw_prediction_metadata": prediction.get("metadata", {}),
             },
         )
@@ -303,8 +371,13 @@ class DecisionEngine:
         symbol: str | None,
         expected_return_bps: float | None = None,
         net_edge_bps: float | None = None,
+        conservative_return_bps: float | None = None,
         confidence: float | None = None,
+        regime: RegimeResult | None = None,
+        routing: AlphaRoutingResult | None = None,
     ) -> DecisionResult:
+        regime_payload = regime.to_dict() if regime is not None else {}
+        routing_payload = routing.to_dict() if routing is not None else {}
         return DecisionResult(
             action="NO_TRADE",
             model_name=str(prediction.get("model_name")),
@@ -316,10 +389,13 @@ class DecisionEngine:
             score=_optional_float(prediction.get("score")),
             probability=_optional_float(prediction.get("probability")),
             expected_return_bps=_optional_float(expected_return_bps if expected_return_bps is not None else prediction.get("predicted_return_bps")),
+            conservative_return_bps=_optional_float(conservative_return_bps),
             expected_cost_bps=float(expected_cost_bps),
             net_edge_bps=_optional_float(net_edge_bps),
             size_suggestion=0,
             blocked_by_risk=False,
+            selected_alpha=str(routing_payload.get("selected_alpha", "none")),
+            regime=str(regime_payload.get("regime_name", "unknown")),
             reasons=reasons,
             timestamp=timestamp.isoformat() if timestamp is not None else None,
             symbol=symbol,
@@ -331,6 +407,8 @@ class DecisionEngine:
                     for column in self.decision_config.explain_feature_columns
                     if column in row.index
                 },
+                "regime": regime_payload,
+                "alpha_routing": routing_payload,
                 "raw_prediction_metadata": prediction.get("metadata", {}),
             },
         )
@@ -401,6 +479,46 @@ def _size_suggestion(
     edge_multiplier = min(max(net_edge_bps / max(min_edge_bps * 2.0, 1e-6), 0.0), 1.0)
     scaled = sizing.default_position_size * max(confidence_multiplier, 0.25) * max(edge_multiplier, 0.25)
     return int(min(max(round(scaled), 1), sizing.max_position_size))
+
+
+def _conservative_return_bps(
+    prediction: dict[str, Any],
+    *,
+    action: str,
+    fallback: float,
+    enabled: bool,
+) -> float:
+    if not enabled:
+        return float(fallback)
+    quantiles = {str(key): float(value) for key, value in (prediction.get("predicted_quantiles") or {}).items()}
+    if action == "LONG":
+        for key in ("0.1", "q10", "10"):
+            if key in quantiles:
+                return float(min(fallback, quantiles[key]))
+    if action == "SHORT":
+        for key in ("0.9", "q90", "90"):
+            if key in quantiles:
+                return float(max(fallback, quantiles[key]))
+    interval = sorted(quantiles.values())
+    if action == "LONG" and interval:
+        return float(min(fallback, interval[0]))
+    if action == "SHORT" and interval:
+        return float(max(fallback, interval[-1]))
+    return float(fallback)
+
+
+def _default_strategy_config() -> StrategyConfig:
+    return StrategyConfig(
+        enabled_alphas=("low_edge_no_trade_filter", "orb_continuation", "vwap_mean_reversion", "late_session_alpha"),
+        alpha_priority_order=("low_edge_no_trade_filter", "orb_continuation", "vwap_mean_reversion", "late_session_alpha"),
+        alpha_router_mode="priority_conservative",
+        regime_detection_enabled=True,
+        conservative_decision_mode=True,
+        min_net_edge_bps_by_alpha={"orb_continuation": 1.5, "vwap_mean_reversion": 1.0, "late_session_alpha": 2.0},
+        regime_thresholds={},
+        no_trade_filters=("high_cost_regime", "low_liquidity_regime", "noisy_open", "low_edge_midday"),
+        alpha_specific_thresholds={},
+    )
 
 
 def _optional_float(value: Any) -> float | None:
