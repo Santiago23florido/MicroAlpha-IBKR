@@ -15,7 +15,8 @@ import torch
 
 from config import Settings
 from data.lob_dataset import load_lob_capture_frame
-from models.deep_lob import DeepLOBReferenceLike, lob_feature_columns
+from data.lob_labels import attach_lob_intraday_momentum_features
+from models.deep_lob import build_lob_model, lob_feature_columns
 from models.registry import ModelRegistry
 
 
@@ -47,7 +48,10 @@ class KrakenPaperPolicy:
     minimum_order_source: str
     position_fraction: float
     fee_bps: float
+    maker_fee_bps: float
     slippage_bps: float
+    estimated_roundtrip_cost_bps: float
+    edge_buffer_bps: float
     model_prob_threshold: float
     max_trades_per_day: int
     max_daily_loss_pct: float
@@ -84,10 +88,13 @@ class KrakenPaperSimulator:
         self.policy = policy
         self.depth_levels = int(artifact_payload.get("depth_levels", settings.models.lob_depth_levels))
         self.sequence_length = int(artifact_payload.get("sequence_length", settings.models.lob_sequence_length))
-        self.feature_columns = lob_feature_columns(self.depth_levels)
+        self.feature_columns = list(artifact_payload.get("feature_columns") or lob_feature_columns(self.depth_levels))
+        self.target_mode = str(artifact_payload.get("target_mode", "mid_price_direction"))
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = DeepLOBReferenceLike(
-            feature_dim=self.depth_levels * 4,
+        self.model_family = str(artifact_payload.get("model_family", "deep_lob_reference_like"))
+        self.model = build_lob_model(
+            self.model_family,
+            feature_dim=len(self.feature_columns),
             sequence_length=self.sequence_length,
         )
         self.model.load_state_dict(artifact_payload["state_dict"])
@@ -111,8 +118,9 @@ class KrakenPaperSimulator:
         row = window.iloc[-1]
         features = _normalize_window(window, self.feature_columns, self.depth_levels)
         with torch.no_grad():
-            logits, _predicted_return = self.model(torch.tensor(features[None, :, :], dtype=torch.float32, device=self.device))
+            logits, predicted_return_tensor = self.model(torch.tensor(features[None, :, :], dtype=torch.float32, device=self.device))
             probabilities = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            predicted_return_bps = float(predicted_return_tensor.cpu().numpy()[0])
         predicted_class = int(np.argmax(probabilities))
         confidence = float(probabilities[predicted_class])
         timestamp = str(row["event_ts_utc"])
@@ -131,6 +139,10 @@ class KrakenPaperSimulator:
             reason = "confidence_below_threshold"
         elif self._daily_loss_limit_reached(bid):
             reason = "daily_loss_limit_reached"
+        elif predicted_class == 2 and not self._predicted_edge_is_tradeable(predicted_return_bps, side="buy"):
+            reason = "expected_edge_below_cost_threshold"
+        elif predicted_class == 0 and self.state.position_qty > 0 and not self._predicted_edge_is_tradeable(predicted_return_bps, side="sell"):
+            reason = "expected_exit_edge_below_cost_threshold"
         elif predicted_class == 2:
             action, reason, execution_price, quantity, fee = self._try_buy(timestamp, ask, confidence)
         elif predicted_class == 0:
@@ -144,6 +156,8 @@ class KrakenPaperSimulator:
             "prob_down": float(probabilities[0]),
             "prob_stationary": float(probabilities[1]),
             "prob_up": float(probabilities[2]),
+            "predicted_return_bps": predicted_return_bps,
+            "required_edge_bps": self.policy.estimated_roundtrip_cost_bps + self.policy.edge_buffer_bps,
             "confidence": confidence,
             "threshold": self.policy.model_prob_threshold,
             "action": action,
@@ -157,6 +171,7 @@ class KrakenPaperSimulator:
             "cash_eur": self.state.cash_eur,
             "position_qty": self.state.position_qty,
             "equity_eur": equity,
+            "net_pnl_eur": equity - self.policy.initial_cash_eur,
             "pnl_eur": equity - self.policy.initial_cash_eur,
             "open_positions": 1 if self.state.position_qty > 0 else 0,
         }
@@ -168,6 +183,7 @@ class KrakenPaperSimulator:
                 "position_qty": self.state.position_qty,
                 "mark_price": bid,
                 "equity_eur": equity,
+                "net_pnl_eur": equity - self.policy.initial_cash_eur,
                 "pnl_eur": equity - self.policy.initial_cash_eur,
             }
         )
@@ -177,6 +193,10 @@ class KrakenPaperSimulator:
         final_bid = float(replay.iloc[-1]["bid_px_1"])
         final_ask = float(replay.iloc[-1]["ask_px_1"])
         final_equity = self._equity(final_bid)
+        gross_trade_pnl = sum(
+            float(trade.get("notional_eur", 0.0)) * (1.0 if trade.get("side") == "sell" else -1.0)
+            for trade in self.trades
+        )
         latest_decision = self.decisions[-1] if self.decisions else {}
         return {
             "status": "ok",
@@ -184,6 +204,7 @@ class KrakenPaperSimulator:
             "symbol": self.symbol,
             "model_artifact": str(self.artifact_path),
             "model_device": str(self.device),
+            "model_family": self.model_family,
             "from_date": start_date,
             "duration_minutes": duration_minutes,
             "source_files": source_files,
@@ -195,10 +216,15 @@ class KrakenPaperSimulator:
             "open_position_qty": self.state.position_qty,
             "mark_to_market_eur": self.state.position_qty * final_bid if final_bid > 0 else 0.0,
             "final_equity_eur": final_equity,
+            "broker_realistic_balance_eur": final_equity,
+            "net_pnl_eur": final_equity - self.policy.initial_cash_eur,
             "pnl_eur": final_equity - self.policy.initial_cash_eur,
+            "net_pnl_pct": (final_equity - self.policy.initial_cash_eur) / self.policy.initial_cash_eur,
             "pnl_pct": (final_equity - self.policy.initial_cash_eur) / self.policy.initial_cash_eur,
             "total_fees_eur": self.state.total_fees_eur,
+            "gross_trade_cashflow_eur": gross_trade_pnl,
             "fee_bps": self.policy.fee_bps,
+            "maker_fee_bps": self.policy.maker_fee_bps,
             "slippage_bps": self.policy.slippage_bps,
             "policy": self.policy.to_dict(),
             "latest_market": _latest_book_snapshot(replay.iloc[-1], self.depth_levels),
@@ -271,6 +297,14 @@ class KrakenPaperSimulator:
         self.state.entry_notional_eur = 0.0
         return "sell", "model_down_signal", execution_price, quantity, fee
 
+    def _predicted_edge_is_tradeable(self, predicted_return_bps: float, *, side: str) -> bool:
+        required = self.policy.estimated_roundtrip_cost_bps + self.policy.edge_buffer_bps
+        if self.target_mode == "cost_aware_net_return":
+            required = self.policy.edge_buffer_bps
+        if side == "buy":
+            return predicted_return_bps >= required
+        return predicted_return_bps <= -required
+
     def _daily_trade_count(self, timestamp: str) -> int:
         day = str(pd.Timestamp(timestamp).date())
         return sum(1 for trade in self.trades if str(pd.Timestamp(trade["timestamp"]).date()) == day)
@@ -341,6 +375,7 @@ def load_kraken_paper_replay(
     frame = frame.sort_values(["event_ts_utc", "event_index"]).reset_index(drop=True)
     cutoff = frame["event_ts_utc"].max() - pd.Timedelta(minutes=float(duration_minutes))
     replay = frame[frame["event_ts_utc"] >= cutoff].reset_index(drop=True)
+    replay = _attach_paper_context_features(replay)
     return replay, source_files, start_date
 
 
@@ -379,7 +414,10 @@ def build_kraken_paper_policy(
         minimum_order_source=minimum.source,
         position_fraction=position_fraction,
         fee_bps=float(settings.kraken_lob.paper_fee_bps),
+        maker_fee_bps=float(settings.kraken_lob.paper_maker_fee_bps),
         slippage_bps=float(settings.kraken_lob.paper_slippage_bps),
+        estimated_roundtrip_cost_bps=(2.0 * float(settings.kraken_lob.paper_maker_fee_bps)) + float(settings.kraken_lob.paper_slippage_bps),
+        edge_buffer_bps=float(settings.kraken_lob.paper_edge_buffer_bps),
         model_prob_threshold=float(settings.models.model_prob_threshold),
         max_trades_per_day=int(settings.risk.max_trades_per_day),
         max_daily_loss_pct=float(settings.risk.max_daily_loss_pct),
@@ -513,8 +551,8 @@ def _resolve_artifact(settings: Settings, model_artifact: str) -> tuple[Path, di
                 raise ValueError(f"Deep model artifact not found: {model_artifact}")
             path = Path(str(record["artifact_path"]))
     payload = torch.load(path, map_location="cpu")
-    if payload.get("model_family") != "deep_lob_reference_like":
-        raise ValueError("Kraken paper simulation requires a DeepLOB-like artifact.")
+    if payload.get("model_family") not in {"deep_lob_reference_like", "deepfolio_lite", "lob_transformer_lite"}:
+        raise ValueError("Kraken paper simulation requires a supported LOB deep artifact.")
     return path, payload
 
 
@@ -527,15 +565,30 @@ def _latest_available_date(settings: Settings, symbol: str) -> str:
 
 
 def _normalize_window(window: pd.DataFrame, feature_columns: list[str], depth_levels: int) -> np.ndarray:
+    missing = [column for column in feature_columns if column not in window.columns]
+    if missing:
+        raise ValueError(f"Paper simulation input is missing model feature columns: {missing}")
     raw_values = window[feature_columns].to_numpy(dtype=np.float32).copy()
     last_mid = float((window.iloc[-1]["bid_px_1"] + window.iloc[-1]["ask_px_1"]) / 2.0)
     last_mid = max(last_mid, 1e-9)
     price_count = depth_levels * 2
     price_window = raw_values[:, :price_count]
-    size_window = raw_values[:, price_count:]
+    depth_feature_count = depth_levels * 4
+    size_window = raw_values[:, price_count:depth_feature_count]
     raw_values[:, :price_count] = ((price_window / last_mid) - 1.0) * 10000.0
-    raw_values[:, price_count:] = np.log1p(np.clip(size_window, a_min=0.0, a_max=None))
+    raw_values[:, price_count:depth_feature_count] = np.log1p(np.clip(size_window, a_min=0.0, a_max=None))
     return raw_values
+
+
+def _attach_paper_context_features(frame: pd.DataFrame) -> pd.DataFrame:
+    enriched = frame.copy()
+    if "session_date" not in enriched.columns:
+        enriched["session_date"] = pd.to_datetime(enriched["event_ts_utc"], utc=True).dt.date.astype(str)
+    bid = pd.to_numeric(enriched["bid_px_1"], errors="coerce")
+    ask = pd.to_numeric(enriched["ask_px_1"], errors="coerce")
+    enriched["mid_price"] = np.where((bid > 0) & (ask > 0), (bid + ask) / 2.0, np.nan)
+    enriched["spread_bps"] = np.where(enriched["mid_price"] > 0, ((ask - bid) / enriched["mid_price"]) * 10000.0, 0.0)
+    return attach_lob_intraday_momentum_features(enriched)
 
 
 def _latest_mid_price(frame: pd.DataFrame) -> float:

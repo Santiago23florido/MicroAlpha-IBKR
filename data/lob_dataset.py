@@ -35,10 +35,13 @@ def build_lob_dataset(
         )
 
     resolved_horizon = horizon_events or settings.models.lob_horizon_events
+    roundtrip_cost_bps = _estimated_roundtrip_cost_bps(settings, resolved_provider)
     labeled = attach_lob_mid_price_labels(
         raw_frame,
         horizon_events=resolved_horizon,
         stationary_threshold_bps=settings.models.lob_stationary_threshold_bps,
+        estimated_roundtrip_cost_bps=roundtrip_cost_bps,
+        edge_buffer_bps=_edge_buffer_bps(settings, resolved_provider),
     )
     labeled["dataset_type"] = "ibkr_lob_depth" if resolved_provider == "ibkr" else "lob_depth"
     labeled["provider"] = resolved_provider
@@ -46,6 +49,7 @@ def build_lob_dataset(
     labeled["depth_levels"] = settings.models.lob_depth_levels
     labeled["horizon_events"] = resolved_horizon
     labeled["stationary_threshold_bps"] = settings.models.lob_stationary_threshold_bps
+    labeled["target_mode"] = "cost_aware_net_return" if resolved_provider == "kraken" else "mid_price_direction"
 
     target_path = _default_dataset_path(settings, ticker, from_date, to_date, resolved_horizon, provider=resolved_provider)
     if output_path is not None:
@@ -67,6 +71,9 @@ def build_lob_dataset(
         "sequence_length": settings.models.lob_sequence_length,
         "horizon_events": resolved_horizon,
         "stationary_threshold_bps": settings.models.lob_stationary_threshold_bps,
+        "estimated_roundtrip_cost_bps": roundtrip_cost_bps,
+        "edge_buffer_bps": _edge_buffer_bps(settings, resolved_provider),
+        "target_mode": "cost_aware_net_return" if resolved_provider == "kraken" else "mid_price_direction",
         "normalization": "price_rel_to_last_mid_bps_and_log1p_sizes",
         "row_count": int(len(labeled)),
         "observed_levels": int(max(labeled["observed_bid_levels"].max(), labeled["observed_ask_levels"].max())),
@@ -84,6 +91,9 @@ def build_lob_dataset(
             up_ratio=("target_class", lambda values: float((values == 1).mean())),
             down_ratio=("target_class", lambda values: float((values == -1).mean())),
             flat_ratio=("target_class", lambda values: float((values == 0).mean())),
+            cost_aware_up_ratio=("target_class_cost_aware", lambda values: float((values == 1).mean())),
+            cost_aware_down_ratio=("target_class_cost_aware", lambda values: float((values == -1).mean())),
+            cost_aware_no_trade_ratio=("target_class_cost_aware", lambda values: float((values == 0).mean())),
         )
         .reset_index()
         .to_dict(orient="records")
@@ -166,6 +176,21 @@ def _provider_output_root(settings: Settings, provider: str) -> str:
     if provider == "kraken":
         return settings.kraken_lob.output_root
     return settings.lob_capture.output_root
+
+
+def _estimated_roundtrip_cost_bps(settings: Settings, provider: str) -> float:
+    if provider != "kraken":
+        return 0.0
+    return (
+        (2.0 * float(settings.kraken_lob.paper_maker_fee_bps))
+        + float(settings.kraken_lob.paper_slippage_bps)
+    )
+
+
+def _edge_buffer_bps(settings: Settings, provider: str) -> float:
+    if provider != "kraken":
+        return 0.0
+    return float(settings.kraken_lob.paper_edge_buffer_bps)
 
 
 def _normalize_provider(provider: str) -> str:

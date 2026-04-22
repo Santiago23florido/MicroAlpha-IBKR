@@ -24,10 +24,13 @@ from models.deep_lob import (
     DeepLOBReferenceLike,
     LOBSequenceBatch,
     LOBSequenceDataset,
+    build_lob_model,
     build_lob_sequence_batch,
     evaluate_lob_predictions,
     is_lob_dataset,
+    lob_all_feature_columns,
     lob_feature_columns,
+    lob_model_family,
 )
 from models.registry import ModelRegistry
 
@@ -129,6 +132,8 @@ def evaluate_deep_daily(
         raw_frame,
         horizon_events=settings.models.lob_horizon_events,
         stationary_threshold_bps=settings.models.lob_stationary_threshold_bps,
+        estimated_roundtrip_cost_bps=_estimated_roundtrip_cost_bps(settings, resolved_provider),
+        edge_buffer_bps=_edge_buffer_bps(settings, resolved_provider),
     )
     dataset_type = _resolve_lob_dataset_type(labeled, resolved_provider)
     labeled["dataset_type"] = dataset_type
@@ -155,6 +160,7 @@ def evaluate_deep_daily(
             train_batch,
             feature_dim=train_batch.features.shape[2],
             sequence_length=settings.models.lob_sequence_length,
+            model_name="deepfolio_lite",
             train_batch_size=settings.models.lob_train_batch_size,
             epochs=epochs,
             device=device,
@@ -222,6 +228,7 @@ def _train_lob_deep_model(
         train_batch,
         feature_dim=train_batch.features.shape[2],
         sequence_length=sequence_length,
+        model_name=model_name,
         train_batch_size=settings.models.lob_train_batch_size,
         epochs=epochs,
         device=device,
@@ -235,7 +242,8 @@ def _train_lob_deep_model(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = artifact_dir / f"{artifact_id}.pt"
     metadata_path = artifact_dir / f"{artifact_id}.metadata.json"
-    feature_columns = lob_feature_columns(depth_levels)
+    feature_columns = lob_all_feature_columns(raw_frame, depth_levels)
+    target_mode = _resolve_lob_target_mode(raw_frame)
     torch.save(
         {
             "state_dict": model.state_dict(),
@@ -243,12 +251,13 @@ def _train_lob_deep_model(
             "sequence_length": sequence_length,
             "depth_levels": depth_levels,
             "model_name": model_name,
-            "model_family": "deep_lob_reference_like",
+            "model_family": lob_model_family(model_name),
             "dataset_type": dataset_type,
             "provider": provider,
             "horizon_events": int(raw_frame.get("horizon_events", pd.Series([settings.models.lob_horizon_events])).iloc[0]),
             "normalization": "price_rel_to_last_mid_bps_and_log1p_sizes",
             "class_index": {-1: 0, 0: 1, 1: 2},
+            "target_mode": target_mode,
         },
         artifact_path,
     )
@@ -270,6 +279,9 @@ def _train_lob_deep_model(
             ),
             "sequence_length": sequence_length,
             "depth_levels": depth_levels,
+            "target_mode": target_mode,
+            "estimated_roundtrip_cost_bps": float(raw_frame.get("estimated_roundtrip_cost_bps", pd.Series([0.0])).iloc[0]),
+            "edge_buffer_bps": float(raw_frame.get("edge_buffer_bps", pd.Series([0.0])).iloc[0]),
         },
         "metrics": metrics,
         "daily_metrics": daily_metrics,
@@ -291,7 +303,8 @@ def _train_lob_deep_model(
             "dataset_type": dataset_type,
             "provider": provider,
             "target_definition": metadata["target_definition"],
-            "model_family": "deep_lob_reference_like",
+            "model_family": lob_model_family(model_name),
+            "target_mode": target_mode,
         },
         set_active=set_active,
     )
@@ -508,11 +521,12 @@ def _fit_lob_model(
     *,
     feature_dim: int,
     sequence_length: int,
+    model_name: str,
     train_batch_size: int,
     epochs: int,
     device: torch.device,
-) -> DeepLOBReferenceLike:
-    model = DeepLOBReferenceLike(feature_dim=feature_dim, sequence_length=sequence_length).to(device)
+) -> nn.Module:
+    model = build_lob_model(model_name, feature_dim=feature_dim, sequence_length=sequence_length).to(device)
     dataset = LOBSequenceDataset(batch)
     loader = DataLoader(
         dataset,
@@ -526,10 +540,11 @@ def _fit_lob_model(
     reg_loss_fn = nn.MSELoss()
     batch_log_interval = max(len(loader) // 10, 1)
     logger.info(
-        "Deep training device | device=%s | dataset_type=lob_depth | sequence_length=%s | depth_levels=%s | horizon_events=%s",
+        "Deep training device | device=%s | model_family=%s | dataset_type=lob_depth | sequence_length=%s | feature_dim=%s | horizon_events=%s",
         _describe_device(device),
+        lob_model_family(model_name),
         sequence_length,
-        feature_dim // 4,
+        feature_dim,
         "paper-style",
     )
     for epoch_index in range(epochs):
@@ -722,6 +737,26 @@ def _resolve_lob_dataset_type(frame: pd.DataFrame, provider: str) -> str:
         if current in {"ibkr_lob_depth", "kraken_lob_depth", "lob_depth"}:
             return current
     return "ibkr_lob_depth" if provider == "ibkr" else "lob_depth"
+
+
+def _resolve_lob_target_mode(frame: pd.DataFrame) -> str:
+    if "target_mode" in frame.columns and not frame.empty:
+        return str(frame["target_mode"].iloc[0])
+    if "target_class_cost_aware" in frame.columns:
+        return "cost_aware_net_return"
+    return "mid_price_direction"
+
+
+def _estimated_roundtrip_cost_bps(settings: Settings, provider: str) -> float:
+    if provider != "kraken":
+        return 0.0
+    return (2.0 * float(settings.kraken_lob.paper_maker_fee_bps)) + float(settings.kraken_lob.paper_slippage_bps)
+
+
+def _edge_buffer_bps(settings: Settings, provider: str) -> float:
+    if provider != "kraken":
+        return 0.0
+    return float(settings.kraken_lob.paper_edge_buffer_bps)
 
 
 def _symbol_path_token(symbol: str) -> str:
