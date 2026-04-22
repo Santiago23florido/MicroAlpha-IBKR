@@ -58,6 +58,85 @@ class DeepLOBReferenceLike(nn.Module):
         return self.cls_head(final_hidden), self.reg_head(final_hidden).squeeze(-1)
 
 
+class DeepFolioLite(nn.Module):
+    def __init__(self, feature_dim: int, sequence_length: int, hidden_dim: int = 64, dropout: float = 0.15) -> None:
+        super().__init__()
+        self.sequence_length = sequence_length
+        self.input_norm = nn.LayerNorm(feature_dim)
+        self.projection = nn.Linear(feature_dim, hidden_dim)
+        self.residual_blocks = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+                )
+                for _ in range(2)
+            ]
+        )
+        self.gru = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
+        self.dropout = nn.Dropout(dropout)
+        self.cls_head = nn.Linear(hidden_dim, 3)
+        self.reg_head = nn.Linear(hidden_dim, 1)
+
+    def forward(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden = self.projection(self.input_norm(features))
+        conv_state = hidden.transpose(1, 2)
+        for block in self.residual_blocks:
+            conv_state = torch.nn.functional.gelu(block(conv_state) + conv_state)
+        sequence = conv_state.transpose(1, 2)
+        temporal, _ = self.gru(sequence)
+        final_hidden = self.dropout(temporal[:, -1, :])
+        return self.cls_head(final_hidden), self.reg_head(final_hidden).squeeze(-1)
+
+
+class LOBTransformerLite(nn.Module):
+    def __init__(self, feature_dim: int, sequence_length: int, hidden_dim: int = 64, heads: int = 4, dropout: float = 0.15) -> None:
+        super().__init__()
+        self.sequence_length = sequence_length
+        self.input_norm = nn.LayerNorm(feature_dim)
+        self.projection = nn.Linear(feature_dim, hidden_dim)
+        self.position_embedding = nn.Parameter(torch.zeros(1, sequence_length, hidden_dim))
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=heads,
+            dim_feedforward=hidden_dim * 2,
+            dropout=dropout,
+            batch_first=True,
+            activation="gelu",
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
+        self.dropout = nn.Dropout(dropout)
+        self.cls_head = nn.Linear(hidden_dim, 3)
+        self.reg_head = nn.Linear(hidden_dim, 1)
+
+    def forward(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden = self.projection(self.input_norm(features))
+        hidden = hidden + self.position_embedding[:, : hidden.shape[1], :]
+        encoded = self.encoder(hidden)
+        pooled = self.dropout(encoded[:, -1, :])
+        return self.cls_head(pooled), self.reg_head(pooled).squeeze(-1)
+
+
+def build_lob_model(model_name: str, *, feature_dim: int, sequence_length: int) -> nn.Module:
+    family = lob_model_family(model_name)
+    if family == "deepfolio_lite":
+        return DeepFolioLite(feature_dim=feature_dim, sequence_length=sequence_length)
+    if family == "lob_transformer_lite":
+        return LOBTransformerLite(feature_dim=feature_dim, sequence_length=sequence_length)
+    return DeepLOBReferenceLike(feature_dim=feature_dim, sequence_length=sequence_length)
+
+
+def lob_model_family(model_name: str) -> str:
+    normalized = str(model_name or "").strip().lower()
+    if "deepfolio" in normalized or normalized in {"deep_lob_lite", "deep"}:
+        return "deepfolio_lite"
+    if "lit" in normalized or "transformer" in normalized or "translob" in normalized:
+        return "lob_transformer_lite"
+    return "deep_lob_reference_like"
+
+
 def is_lob_dataset(frame: pd.DataFrame) -> bool:
     if "dataset_type" in frame.columns:
         try:
@@ -76,14 +155,33 @@ def lob_feature_columns(depth_levels: int) -> list[str]:
     )
 
 
+def lob_context_feature_columns(frame: pd.DataFrame) -> list[str]:
+    candidates = [
+        "momentum_10_events_bps",
+        "momentum_50_events_bps",
+        "momentum_100_events_bps",
+        "rolling_volatility_10_events_bps",
+        "rolling_volatility_50_events_bps",
+        "rolling_volatility_100_events_bps",
+        "top_level_imbalance",
+        "spread_regime_bps",
+    ]
+    return [column for column in candidates if column in frame.columns]
+
+
+def lob_all_feature_columns(frame: pd.DataFrame, depth_levels: int) -> list[str]:
+    return lob_feature_columns(depth_levels) + lob_context_feature_columns(frame)
+
+
 def build_lob_sequence_batch(
     frame: pd.DataFrame,
     *,
     depth_levels: int,
     sequence_length: int,
 ) -> LOBSequenceBatch:
-    feature_columns = lob_feature_columns(depth_levels)
-    missing = [column for column in feature_columns if column not in frame.columns]
+    depth_feature_columns = lob_feature_columns(depth_levels)
+    feature_columns = lob_all_feature_columns(frame, depth_levels)
+    missing = [column for column in depth_feature_columns if column not in frame.columns]
     if missing:
         raise ValueError(f"LOB dataset is missing required depth columns: {missing}")
 
@@ -91,8 +189,14 @@ def build_lob_sequence_batch(
     normalized["event_ts_utc"] = pd.to_datetime(normalized["event_ts_utc"], utc=True)
     if "session_date" not in normalized.columns:
         normalized["session_date"] = normalized["event_ts_utc"].dt.date.astype(str)
-    if "target_class" not in normalized.columns or "future_return_bps" not in normalized.columns:
+    target_column = "target_class_cost_aware" if "target_class_cost_aware" in normalized.columns else "target_class"
+    return_column = "net_future_return_bps" if "net_future_return_bps" in normalized.columns else "future_return_bps"
+    if target_column not in normalized.columns or return_column not in normalized.columns:
         raise ValueError("LOB dataset must include target_class and future_return_bps.")
+    normalized[feature_columns] = normalized[feature_columns].apply(pd.to_numeric, errors="coerce").replace(
+        [np.inf, -np.inf],
+        np.nan,
+    ).fillna(0.0)
 
     sequences: list[np.ndarray] = []
     classes: list[int] = []
@@ -112,13 +216,14 @@ def build_lob_sequence_batch(
             window = raw_values[start_index : end_index + 1].copy()
             last_mid = float(max(mid_prices[end_index], 1e-9))
             price_count = depth_levels * 2
+            depth_feature_count = depth_levels * 4
             price_window = window[:, :price_count]
-            size_window = window[:, price_count:]
+            size_window = window[:, price_count:depth_feature_count]
             window[:, :price_count] = ((price_window / last_mid) - 1.0) * 10000.0
-            window[:, price_count:] = np.log1p(np.clip(size_window, a_min=0.0, a_max=None))
+            window[:, price_count:depth_feature_count] = np.log1p(np.clip(size_window, a_min=0.0, a_max=None))
             sequences.append(window)
-            classes.append(target_class_map[int(session_rows.iloc[end_index]["target_class"])])
-            returns.append(float(session_rows.iloc[end_index]["future_return_bps"]))
+            classes.append(target_class_map[int(session_rows.iloc[end_index][target_column])])
+            returns.append(float(session_rows.iloc[end_index][return_column]))
             session_dates.append(str(session_date))
             target_timestamps.append(session_rows.iloc[end_index]["event_ts_utc"].isoformat())
     if not sequences:

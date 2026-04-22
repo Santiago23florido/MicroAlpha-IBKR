@@ -240,16 +240,21 @@ def test_kraken_lob_capture_dataset_training_and_paper_sim(tmp_path: Path) -> No
     )
     assert dataset_result["provider"] == "kraken"
     assert dataset_result["dataset_type"] == "lob_depth"
+    dataset_frame = pd.read_parquet(dataset_result["dataset_path"])
+    assert "target_class_cost_aware" in dataset_frame.columns
+    assert "momentum_10_events_bps" in dataset_frame.columns
+    assert str(dataset_frame["target_mode"].iloc[0]) == "cost_aware_net_return"
 
     train_payload = train_deep_model(
         settings,
         data_path=dataset_result["dataset_path"],
-        model_name="deep_lob_reference_like",
+        model_name="deepfolio_lite",
         epochs=1,
         set_active=True,
     )
     assert train_payload["metadata"]["provider"] == "kraken"
     assert train_payload["metadata"]["dataset_type"] == "lob_depth"
+    assert train_payload["record"]["model_family"] == "deepfolio_lite"
 
     sim_payload = run_kraken_paper_sim(
         settings,
@@ -262,6 +267,8 @@ def test_kraken_lob_capture_dataset_training_and_paper_sim(tmp_path: Path) -> No
     assert sim_payload["provider"] == "kraken"
     assert sim_payload["note"].startswith("Local simulation only")
     assert sim_payload["policy"]["initial_cash_mode"] == "fixed"
+    assert "broker_realistic_balance_eur" in sim_payload
+    assert "net_pnl_eur" in sim_payload
     assert Path(sim_payload["decisions_path"]).exists()
     assert Path(sim_payload["equity_path"]).exists()
 
@@ -352,10 +359,12 @@ def _build_temp_settings(tmp_path: Path):
         batch_size=2,
         flush_interval_seconds=0.1,
         paper_fee_bps=26.0,
+        paper_maker_fee_bps=25.0,
         paper_initial_cash_eur=1000.0,
         paper_initial_cash_mode="fixed",
         paper_position_fraction=0.25,
         paper_slippage_bps=2.0,
+        paper_edge_buffer_bps=15.0,
     )
     return replace(
         base_settings,
